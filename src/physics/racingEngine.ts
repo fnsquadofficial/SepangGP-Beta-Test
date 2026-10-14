@@ -304,29 +304,33 @@ export class RacingPhysicsEngine {
     const currentLatDist = carOffset.dot(currTrackNorm);
     const absLatDist = Math.abs(currentLatDist);
 
-    // Solid Armco barrier is at ±9.6m. HARD CLAMP at 8.9m to ensure car CAN NEVER EXIT CIRCUIT!
-    const MAX_BARRIER_DISTANCE = 8.9;
+    // Solid Armco barrier is at ±9.6m. HARD CLAMP at 9.0m to ensure car CAN NEVER EXIT CIRCUIT!
+    const MAX_BARRIER_DISTANCE = 9.0;
 
     if (absLatDist > MAX_BARRIER_DISTANCE) {
       const barrierSide = Math.sign(currentLatDist);
-      const clampedLat = barrierSide * (MAX_BARRIER_DISTANCE - 0.15);
+      const clampedLat = barrierSide * (MAX_BARRIER_DISTANCE - 0.2);
 
-      // Instantly clamp position safely inside track barrier
-      this.position.x = currTrackPt.x + currTrackNorm.x * clampedLat;
-      this.position.z = currTrackPt.z + currTrackNorm.z * clampedLat;
+      // Preserve tangential distance along track to prevent stuttering/teleporting
+      const tangentDist = carOffset.dot(currTrackTan);
+      this.position.x = currTrackPt.x + currTrackTan.x * tangentDist + currTrackNorm.x * clampedLat;
+      this.position.z = currTrackPt.z + currTrackTan.z * tangentDist + currTrackNorm.z * clampedLat;
 
       // Deflect forward heading along track tangent (prevent nose pushing through barrier)
-      this.forward.lerp(currTrackTan, 0.55).normalize();
+      this.forward.lerp(currTrackTan, 0.45).normalize();
 
       if (this.speedKmh > 25) {
         audioEngine.playBarrierThump();
       }
-      this.speedKmh = Math.max(0, this.speedKmh * 0.72);
-      this.lateralSlip = 0.7;
+      this.speedKmh = Math.max(0, this.speedKmh * 0.78);
+      this.lateralSlip = 0.5;
     }
 
-    // Emergency failsafe: If position ever exceeds 13m from track, auto-recover to track center
-    if (absLatDist > 13.0 || this.position.y < -0.8) {
+    // Emergency failsafe: Only auto-recover if car is ejected far laterally (> 14m)
+    // or falls more than 4m below the local track surface elevation (NOT fixed y threshold,
+    // as Sepang drops to -2.8m at Turn 2 downhill hairpin).
+    const verticalDrop = currTrackPt.y - this.position.y;
+    if (absLatDist > 14.0 || verticalDrop > 4.0) {
       this.recoverToTrackCenter();
     } else {
       // Smooth vertical elevation following track surface
@@ -581,6 +585,25 @@ export class RacingPhysicsEngine {
       deltaToBest: this.bestLapTime > 0 ? this.currentLapTime - this.bestLapTime : 0,
       slipstreamActive: this.slipstreamActive,
       trackProgress: this.trackProgress,
+      worldPosition: {
+        x: Math.round(this.position.x * 10) / 10,
+        y: Math.round(this.position.y * 10) / 10,
+        z: Math.round(this.position.z * 10) / 10,
+      },
+      headingAngle: Math.atan2(this.forward.x, this.forward.z),
+      competitors: this.aiDrivers.map((a) => {
+        const pt = this.curve.getPointAt(a.trackProgress);
+        return {
+          id: a.id,
+          name: a.name,
+          number: a.number,
+          position: a.position,
+          progress: a.trackProgress,
+          color: a.color,
+          x: Math.round(pt.x * 10) / 10,
+          z: Math.round(pt.z * 10) / 10,
+        };
+      }),
     };
   }
 }

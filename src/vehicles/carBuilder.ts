@@ -73,36 +73,85 @@ function buildF1Car(primaryColor: string, secondaryColor: string): Car3DInstance
     roughness: 0.2,
   });
 
-  // 1. Monocoque Chassis & Nosecone
+  // 1. Monocoque Chassis & Sculpted Nosecone
   const chassisGeo = new THREE.BoxGeometry(0.85, 0.45, 3.2);
   const chassis = new THREE.Mesh(chassisGeo, bodyMat);
   chassis.position.set(0, 0.42, 0);
   chassis.castShadow = true;
   root.add(chassis);
 
-  // Tapered Nose
-  const noseGeo = new THREE.ConeGeometry(0.38, 1.6, 4);
+  // Aerodynamic Tapered Nosecone (flows forward and dips seamlessly towards wing)
+  const noseGeo = new THREE.BoxGeometry(0.65, 0.32, 1.35);
   const nose = new THREE.Mesh(noseGeo, bodyMat);
-  nose.rotation.x = Math.PI / 2;
-  nose.rotation.y = Math.PI / 4;
-  nose.position.set(0, 0.32, -2.1);
+  nose.position.set(0, 0.32, -2.05);
+  nose.rotation.x = 0.08; // Gentle aerodynamic downward slope
   nose.castShadow = true;
   root.add(nose);
 
-  // 2. Front Wing with Cascade & Endplates
-  const frontWingGeo = new THREE.BoxGeometry(1.9, 0.08, 0.48);
-  const frontWing = new THREE.Mesh(frontWingGeo, secondaryMat);
-  frontWing.position.set(0, 0.16, -2.55);
-  frontWing.castShadow = true;
-  root.add(frontWing);
+  // Nosecone Tip Badge Block
+  const noseTipGeo = new THREE.BoxGeometry(0.38, 0.18, 0.45);
+  const noseTip = new THREE.Mesh(noseTipGeo, secondaryMat);
+  noseTip.position.set(0, 0.24, -2.55);
+  noseTip.castShadow = true;
+  root.add(noseTip);
 
-  // Front Wing Endplates
-  const endplateGeo = new THREE.BoxGeometry(0.04, 0.28, 0.52);
+  // Structural Aerodynamic Nose Pylons (Twin carbon pillars securely mounting wing to nose)
+  const pylonGeo = new THREE.BoxGeometry(0.04, 0.14, 0.22);
+  const leftPylon = new THREE.Mesh(pylonGeo, carbonMat);
+  leftPylon.position.set(-0.14, 0.16, -2.48);
+  const rightPylon = new THREE.Mesh(pylonGeo, carbonMat);
+  rightPylon.position.set(0.14, 0.16, -2.48);
+  root.add(leftPylon, rightPylon);
+
+  // 2. High-Performance Front Wing Assembly (Authentic 1.96m Ground-Effect Aerodynamics)
+  // Lower Carbon Mainplane (Wide foundation spanning across the front track)
+  const mainplaneGeo = new THREE.BoxGeometry(1.96, 0.045, 0.42);
+  const frontWingMainplane = new THREE.Mesh(mainplaneGeo, carbonMat);
+  frontWingMainplane.position.set(0, 0.11, -2.52);
+  frontWingMainplane.castShadow = true;
+  root.add(frontWingMainplane);
+
+  // Upper Aero Cascade Flap (Downforce generator with team accent color)
+  const cascadeGeo = new THREE.BoxGeometry(1.92, 0.035, 0.26);
+  const cascadeFlap = new THREE.Mesh(cascadeGeo, secondaryMat);
+  cascadeFlap.position.set(0, 0.16, -2.45);
+  cascadeFlap.rotation.x = 0.12; // Angle of attack
+  cascadeFlap.castShadow = true;
+  root.add(cascadeFlap);
+
+  // Tertiary Upper Flap Tip Strip
+  const flapStripGeo = new THREE.BoxGeometry(1.88, 0.025, 0.16);
+  const flapStrip = new THREE.Mesh(flapStripGeo, bodyMat);
+  flapStrip.position.set(0, 0.19, -2.38);
+  flapStrip.rotation.x = 0.18;
+  flapStrip.castShadow = true;
+  root.add(flapStrip);
+
+  // Left & Right Vertical Endplates with Outwash Canards (Dive Planes)
+  const endplateGeo = new THREE.BoxGeometry(0.04, 0.24, 0.54);
   const leftEndplate = new THREE.Mesh(endplateGeo, carbonMat);
-  leftEndplate.position.set(-0.95, 0.22, -2.55);
+  leftEndplate.position.set(-0.98, 0.20, -2.48);
   const rightEndplate = new THREE.Mesh(endplateGeo, carbonMat);
-  rightEndplate.position.set(0.95, 0.22, -2.55);
+  rightEndplate.position.set(0.98, 0.20, -2.48);
   root.add(leftEndplate, rightEndplate);
+
+  // Endplate Footplates (Lower sealing ground-effect skids)
+  const footplateGeo = new THREE.BoxGeometry(0.08, 0.02, 0.48);
+  const leftFootplate = new THREE.Mesh(footplateGeo, carbonMat);
+  leftFootplate.position.set(-0.98, 0.09, -2.48);
+  const rightFootplate = new THREE.Mesh(footplateGeo, carbonMat);
+  rightFootplate.position.set(0.98, 0.09, -2.48);
+  root.add(leftFootplate, rightFootplate);
+
+  // Endplate Outer Dive Planes (Directing airflow around front tires)
+  const canardGeo = new THREE.BoxGeometry(0.12, 0.02, 0.22);
+  const leftCanard = new THREE.Mesh(canardGeo, carbonMat);
+  leftCanard.position.set(-1.04, 0.22, -2.46);
+  leftCanard.rotation.z = -0.2;
+  const rightCanard = new THREE.Mesh(canardGeo, carbonMat);
+  rightCanard.position.set(1.04, 0.22, -2.46);
+  rightCanard.rotation.z = 0.2;
+  root.add(leftCanard, rightCanard);
 
   // 3. Sidepods & Radiator Inlets
   const sidepodGeo = new THREE.BoxGeometry(0.42, 0.38, 1.6);
@@ -340,12 +389,34 @@ function buildGT3Car(primaryColor: string, secondaryColor: string): Car3DInstanc
   hood.castShadow = true;
   root.add(hood);
 
-  // Front Splitter
-  const splitterGeo = new THREE.BoxGeometry(1.95, 0.06, 0.5);
+  // Front Splitter (Aggressive endurance racing carbon splitter)
+  const splitterGeo = new THREE.BoxGeometry(1.98, 0.06, 0.58);
   const carbonMat = new THREE.MeshStandardMaterial({ color: 0x09090b, roughness: 0.5 });
   const splitter = new THREE.Mesh(splitterGeo, carbonMat);
-  splitter.position.set(0, 0.12, -2.25);
+  splitter.position.set(0, 0.12, -2.28);
+  splitter.castShadow = true;
   root.add(splitter);
+
+  // Twin Metallic Splitter Support Struts (Tie-Rods)
+  const strutGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.26);
+  const strutMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.9, roughness: 0.2 });
+  const leftStrut = new THREE.Mesh(strutGeo, strutMat);
+  leftStrut.position.set(-0.35, 0.24, -2.26);
+  leftStrut.rotation.x = -0.25;
+  const rightStrut = new THREE.Mesh(strutGeo, strutMat);
+  rightStrut.position.set(0.35, 0.24, -2.26);
+  rightStrut.rotation.x = -0.25;
+  root.add(leftStrut, rightStrut);
+
+  // Bumper Corner Dive Planes (Canards)
+  const gt3CanardGeo = new THREE.BoxGeometry(0.18, 0.02, 0.22);
+  const leftGt3Canard = new THREE.Mesh(gt3CanardGeo, carbonMat);
+  leftGt3Canard.position.set(-0.96, 0.28, -2.18);
+  leftGt3Canard.rotation.z = -0.25;
+  const rightGt3Canard = new THREE.Mesh(gt3CanardGeo, carbonMat);
+  rightGt3Canard.position.set(0.96, 0.28, -2.18);
+  rightGt3Canard.rotation.z = 0.25;
+  root.add(leftGt3Canard, rightGt3Canard);
 
   // 2. Cockpit Greenhouse (Cabin + Windshield)
   const cabinGeo = new THREE.BoxGeometry(1.4, 0.48, 1.8);

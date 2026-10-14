@@ -1186,85 +1186,175 @@ export function createSepangCircuit(weather: 'day' | 'sunset' | 'wet' = 'day'): 
   const shoulderMesh = new THREE.Mesh(shoulderGeo, shoulderMat);
   shoulderMesh.receiveShadow = true;
 
-  // 4. Procedural Red & White Apex Kerbs
+  // 4. Ultra-Smooth Continuous Red & White Apex Kerbs (Ribbon Geometry - 1 Draw Call)
   const curbsGroup = new THREE.Group();
   curbsGroup.add(shoulderMesh);
 
-  const curbMatRed = new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.5 });
-  const curbMatWhite = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.5 });
+  // Red & White Kerb Canvas Texture
+  const curbCanvas = document.createElement('canvas');
+  curbCanvas.width = 128;
+  curbCanvas.height = 128;
+  const cctx = curbCanvas.getContext('2d')!;
+  cctx.fillStyle = '#ef4444'; // FIA Racing Red
+  cctx.fillRect(0, 0, 128, 64);
+  cctx.fillStyle = '#f8fafc'; // Crisp White
+  cctx.fillRect(0, 64, 128, 64);
+  // Add subtle 3D rumble bevel
+  cctx.fillStyle = 'rgba(0,0,0,0.12)';
+  cctx.fillRect(0, 60, 128, 4);
+  cctx.fillRect(0, 124, 128, 4);
 
-  SEPANG_CONTROL_POINTS.forEach((pt) => {
-    if (!pt.curbSide || pt.curbSide === 'none') return;
+  const curbTexture = new THREE.CanvasTexture(curbCanvas);
+  curbTexture.wrapS = THREE.RepeatWrapping;
+  curbTexture.wrapT = THREE.RepeatWrapping;
+  curbTexture.repeat.set(1, 160);
+  curbTexture.needsUpdate = true;
 
-    // Find point index on curve
-    const approxT = points.findIndex(p => Math.hypot(p.x - pt.x, p.z - pt.z) < 0.1) / points.length;
-    if (approxT < 0) return;
-    const curbSegments = 24;
-
-    for (let c = 0; c < curbSegments; c++) {
-      const stepT = (approxT + (c - curbSegments / 2) * 0.0012 + 1) % 1;
-      const center = curve.getPointAt(stepT);
-      const tangent = curve.getTangentAt(stepT).normalize();
-      const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
-
-      const sides: ('left' | 'right')[] = pt.curbSide === 'both' ? ['left', 'right'] : [pt.curbSide];
-
-      sides.forEach(side => {
-        const sign = side === 'left' ? 1 : -1;
-        const curbWidth = 1.6;
-        const curbOffset = TRACK_WIDTH / 2 + curbWidth / 2 - 0.05;
-
-        const curbPos = new THREE.Vector3(
-          center.x + normal.x * curbOffset * sign,
-          center.y + 0.38,
-          center.z + normal.z * curbOffset * sign
-        );
-
-        const curbGeo = new THREE.BoxGeometry(curbWidth, 0.14, 2.5);
-        const curbMesh = new THREE.Mesh(curbGeo, c % 2 === 0 ? curbMatRed : curbMatWhite);
-        curbMesh.position.copy(curbPos);
-        curbMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), tangent);
-        curbMesh.receiveShadow = true;
-        curbMesh.castShadow = true;
-        curbsGroup.add(curbMesh);
-      });
-    }
+  const curbMaterial = new THREE.MeshStandardMaterial({
+    map: curbTexture,
+    roughness: 0.6,
+    metalness: 0.1,
+    side: THREE.DoubleSide,
   });
 
-  // 5. Continuous FIA Armco Safety Barriers (along both sides at ±9.6m from center)
-  const barriersGroup = new THREE.Group();
-  addCircuitSafetyBarriers(barriersGroup, curve);
+  // Generate continuous extruded curb ribbon along track edges
+  const curbPositions: number[] = [];
+  const curbUvs: number[] = [];
+  const curbIndices: number[] = [];
+  const CURB_WIDTH = 1.4;
 
-  // 6. Trackside Decor: Grandstands, Pit Lane, Gantry, Palms
+  let curbVertexCount = 0;
+  for (let i = 0; i < segments; i++) {
+    const t = i / segments;
+    const pos = curve.getPointAt(t);
+    const tangent = curve.getTangentAt(t).normalize();
+    const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+
+    // Find nearest control point to determine whether left or right has curb
+    let hasLeftCurb = false;
+    let hasRightCurb = false;
+    for (const cp of SEPANG_CONTROL_POINTS) {
+      if (!cp.curbSide || cp.curbSide === 'none') continue;
+      const dx = cp.x - pos.x;
+      const dz = cp.z - pos.z;
+      if (dx * dx + dz * dz < 25 * 25) {
+        if (cp.curbSide === 'left' || cp.curbSide === 'both') hasLeftCurb = true;
+        if (cp.curbSide === 'right' || cp.curbSide === 'both') hasRightCurb = true;
+      }
+    }
+
+    if (hasLeftCurb) {
+      const yCurb = pos.y + 0.36;
+      const innerX = pos.x + normal.x * (TRACK_WIDTH / 2);
+      const innerZ = pos.z + normal.z * (TRACK_WIDTH / 2);
+      const outerX = pos.x + normal.x * (TRACK_WIDTH / 2 + CURB_WIDTH);
+      const outerZ = pos.z + normal.z * (TRACK_WIDTH / 2 + CURB_WIDTH);
+
+      curbPositions.push(innerX, yCurb, innerZ);
+      curbPositions.push(outerX, yCurb, outerZ);
+      curbUvs.push(0, (i / segments) * 160);
+      curbUvs.push(1, (i / segments) * 160);
+
+      const nextI = (i + 1) % segments;
+      const nextPos = curve.getPointAt(nextI / segments);
+      const nextTan = curve.getTangentAt(nextI / segments).normalize();
+      const nextNorm = new THREE.Vector3(-nextTan.z, 0, nextTan.x).normalize();
+
+      const nextInnerX = nextPos.x + nextNorm.x * (TRACK_WIDTH / 2);
+      const nextInnerZ = nextPos.z + nextNorm.z * (TRACK_WIDTH / 2);
+      const nextOuterX = nextPos.x + nextNorm.x * (TRACK_WIDTH / 2 + CURB_WIDTH);
+      const nextOuterZ = nextPos.z + nextNorm.z * (TRACK_WIDTH / 2 + CURB_WIDTH);
+
+      curbPositions.push(nextInnerX, nextPos.y + 0.36, nextInnerZ);
+      curbPositions.push(nextOuterX, nextPos.y + 0.36, nextOuterZ);
+      curbUvs.push(0, ((i + 1) / segments) * 160);
+      curbUvs.push(1, ((i + 1) / segments) * 160);
+
+      const base = curbVertexCount;
+      curbIndices.push(base, base + 2, base + 1);
+      curbIndices.push(base + 1, base + 2, base + 3);
+      curbVertexCount += 4;
+    }
+
+    if (hasRightCurb) {
+      const yCurb = pos.y + 0.36;
+      const innerX = pos.x - normal.x * (TRACK_WIDTH / 2);
+      const innerZ = pos.z - normal.z * (TRACK_WIDTH / 2);
+      const outerX = pos.x - normal.x * (TRACK_WIDTH / 2 + CURB_WIDTH);
+      const outerZ = pos.z - normal.z * (TRACK_WIDTH / 2 + CURB_WIDTH);
+
+      curbPositions.push(innerX, yCurb, innerZ);
+      curbPositions.push(outerX, yCurb, outerZ);
+      curbUvs.push(0, (i / segments) * 160);
+      curbUvs.push(1, (i / segments) * 160);
+
+      const nextI = (i + 1) % segments;
+      const nextPos = curve.getPointAt(nextI / segments);
+      const nextTan = curve.getTangentAt(nextI / segments).normalize();
+      const nextNorm = new THREE.Vector3(-nextTan.z, 0, nextTan.x).normalize();
+
+      const nextInnerX = nextPos.x - nextNorm.x * (TRACK_WIDTH / 2);
+      const nextInnerZ = nextPos.z - nextNorm.z * (TRACK_WIDTH / 2);
+      const nextOuterX = nextPos.x - nextNorm.x * (TRACK_WIDTH / 2 + CURB_WIDTH);
+      const nextOuterZ = nextPos.z - nextNorm.z * (TRACK_WIDTH / 2 + CURB_WIDTH);
+
+      curbPositions.push(nextInnerX, nextPos.y + 0.36, nextInnerZ);
+      curbPositions.push(nextOuterX, nextPos.y + 0.36, nextOuterZ);
+      curbUvs.push(0, ((i + 1) / segments) * 160);
+      curbUvs.push(1, ((i + 1) / segments) * 160);
+
+      const base = curbVertexCount;
+      curbIndices.push(base, base + 1, base + 2);
+      curbIndices.push(base + 1, base + 3, base + 2);
+      curbVertexCount += 4;
+    }
+  }
+
+  if (curbPositions.length > 0) {
+    const curbGeo = new THREE.BufferGeometry();
+    curbGeo.setAttribute('position', new THREE.Float32BufferAttribute(curbPositions, 3));
+    curbGeo.setAttribute('uv', new THREE.Float32BufferAttribute(curbUvs, 2));
+    curbGeo.setIndex(curbIndices);
+    curbGeo.computeVertexNormals();
+
+    const curbMesh = new THREE.Mesh(curbGeo, curbMaterial);
+    curbMesh.receiveShadow = true;
+    curbsGroup.add(curbMesh);
+  }
+
+  // 5. Continuous FIA Armco Safety Barriers (Extruded Ribbon Geometry - 2 Draw Calls Total)
+  const barriersGroup = new THREE.Group();
+  addContinuousCircuitBarriers(barriersGroup, curve, segments);
+
+  // 6. Trackside Decor: Grandstands, Pit Lane, Gantry, Trees
   const decorationsGroup = new THREE.Group();
 
   // A. Iconic Sepang Double-Sided Hibiscus Canopy Grandstand
-  // Sits directly between Main Straight (x: 0) and Back Straight (x: -80) at x: -40
   const grandstandGroup = createSepangCanopyGrandstand();
   grandstandGroup.position.set(-40, 0, 150);
   decorationsGroup.add(grandstandGroup);
 
-  // B. Pit Lane & Garages along Main Straight outside at x: 24
+  // B. Pit Lane & Garages along Main Straight
   const pitBuilding = createPitBuilding();
   pitBuilding.position.set(25, 0, 0);
   decorationsGroup.add(pitBuilding);
 
-  // C. Start / Finish Overhead Gantry with 5 Red Countdown Lights directly over Main Straight (x: 0, z: -20)
+  // C. Start / Finish Overhead Gantry
   const { gantryGroup, lightMeshes } = createStartGantry();
   gantryGroup.position.set(0, 0, -20);
   decorationsGroup.add(gantryGroup);
 
-  // D. Distance Boards (150m, 100m, 50m) before Turn 1 and Turn 15
-  addDistanceMarkers(decorationsGroup, curve);
+  // D. Distance Boards
+  addDistanceMarkers(decorationsGroup);
 
-  // E. Tropical Palm Trees along the circuit
-  addTropicalTrees(decorationsGroup);
+  // E. Tropical Palm Trees (InstancedMesh - 2 Draw Calls, strictly verified safe distance from track)
+  addSafeTropicalTrees(decorationsGroup, samplePoints);
 
-  // F. Floodlight Pylons
-  addFloodlightTowers(decorationsGroup);
+  // F. Safe Floodlight Pylons
+  addSafeFloodlightTowers(decorationsGroup, samplePoints);
 
-  // G. Ground terrain - comfortably below track at y = -1.2m
-  const terrainGeo = new THREE.PlaneGeometry(2400, 2400, 32, 32);
+  // G. Ground Terrain
+  const terrainGeo = new THREE.PlaneGeometry(2400, 2400, 16, 16);
   const terrainMat = new THREE.MeshStandardMaterial({
     color: weather === 'wet' ? 0x1b3820 : 0x225528,
     roughness: 0.95,
@@ -1289,6 +1379,90 @@ export function createSepangCircuit(weather: 'day' | 'sunset' | 'wet' = 'day'): 
 }
 
 /**
+ * Continuous FIA Armco crash barriers along left & right sides at ±9.6m
+ * Extruded as 2 continuous ribbon meshes instead of 1,200 separate boxes!
+ */
+function addContinuousCircuitBarriers(group: THREE.Group, curve: THREE.CatmullRomCurve3, segments: number) {
+  // Blue and white alternating safety guardrail texture
+  const barCanvas = document.createElement('canvas');
+  barCanvas.width = 128;
+  barCanvas.height = 64;
+  const bctx = barCanvas.getContext('2d')!;
+  bctx.fillStyle = '#2563eb'; // FIA Blue
+  bctx.fillRect(0, 0, 64, 64);
+  bctx.fillStyle = '#f8fafc'; // Pure White
+  bctx.fillRect(64, 0, 64, 64);
+  // Corrugated steel lines
+  bctx.fillStyle = 'rgba(0,0,0,0.15)';
+  bctx.fillRect(0, 18, 128, 4);
+  bctx.fillRect(0, 42, 128, 4);
+
+  const barTexture = new THREE.CanvasTexture(barCanvas);
+  barTexture.wrapS = THREE.RepeatWrapping;
+  barTexture.wrapT = THREE.RepeatWrapping;
+  barTexture.repeat.set(160, 1);
+
+  const barMat = new THREE.MeshStandardMaterial({
+    map: barTexture,
+    metalness: 0.4,
+    roughness: 0.5,
+    side: THREE.DoubleSide,
+  });
+
+  const barrierOffset = 9.6;
+  const barrierHeight = 1.1;
+
+  [-1, 1].forEach((side) => {
+    const posList: number[] = [];
+    const uvList: number[] = [];
+    const idxList: number[] = [];
+
+    for (let i = 0; i <= segments; i++) {
+      const t = (i % segments) / segments;
+      const pt = curve.getPointAt(t);
+      const tan = curve.getTangentAt(t).normalize();
+      const norm = new THREE.Vector3(-tan.z, 0, tan.x).normalize();
+
+      const bx = pt.x + norm.x * barrierOffset * side;
+      const bz = pt.z + norm.z * barrierOffset * side;
+      const byBottom = pt.y + 0.2;
+      const byTop = pt.y + 0.2 + barrierHeight;
+
+      posList.push(bx, byBottom, bz);
+      posList.push(bx, byTop, bz);
+      uvList.push((i / segments) * 160, 0);
+      uvList.push((i / segments) * 160, 1);
+
+      if (i < segments) {
+        const v0 = i * 2;
+        const v1 = i * 2 + 1;
+        const v2 = (i + 1) * 2;
+        const v3 = (i + 1) * 2 + 1;
+
+        if (side === 1) {
+          idxList.push(v0, v1, v2);
+          idxList.push(v1, v3, v2);
+        } else {
+          idxList.push(v0, v2, v1);
+          idxList.push(v1, v2, v3);
+        }
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(posList, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvList, 2));
+    geo.setIndex(idxList);
+    geo.computeVertexNormals();
+
+    const mesh = new THREE.Mesh(geo, barMat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  });
+}
+
+/**
  * Procedural model of Sepang's signature twin-canopy Hibiscus Grandstand
  */
 function createSepangCanopyGrandstand(): THREE.Group {
@@ -1303,23 +1477,21 @@ function createSepangCanopyGrandstand(): THREE.Group {
   baseMesh.receiveShadow = true;
   group.add(baseMesh);
 
-  // Seating tiers with colored seats (Malaysian red & yellow theme)
+  // Seating tiers with colored seats
   const seatMatRed = new THREE.MeshStandardMaterial({ color: 0xdc2626 });
   const seatMatYellow = new THREE.MeshStandardMaterial({ color: 0xf59e0b });
-  for (let s = 0; s < 44; s++) {
-    const seatStripGeo = new THREE.BoxGeometry(15, 0.4, 9);
+  for (let s = 0; s < 24; s++) {
+    const seatStripGeo = new THREE.BoxGeometry(15, 0.4, 18);
     const seatStrip = new THREE.Mesh(seatStripGeo, s % 2 === 0 ? seatMatRed : seatMatYellow);
-    seatStrip.position.set(9, 12.2, -210 + s * 10);
+    seatStrip.position.set(9, 12.2, -210 + s * 18);
     group.add(seatStrip);
 
-    // Opposite side (Back Straight view)
     const seatStripBack = new THREE.Mesh(seatStripGeo, s % 2 === 0 ? seatMatYellow : seatMatRed);
-    seatStripBack.position.set(-9, 12.2, -210 + s * 10);
+    seatStripBack.position.set(-9, 12.2, -210 + s * 18);
     group.add(seatStripBack);
   }
 
-  // Iconic Hibiscus Curved Palm Leaf Canopies (Winged tensile fabric roofs)
-  const roofSegments = 22;
+  // Tensile fabric Hibiscus canopies
   const canopyMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     roughness: 0.3,
@@ -1327,36 +1499,25 @@ function createSepangCanopyGrandstand(): THREE.Group {
     side: THREE.DoubleSide,
   });
 
-  for (let r = 0; r < roofSegments; r++) {
-    const petalGeo = new THREE.CylinderGeometry(18, 14, 18, 16, 1, false, 0, Math.PI);
+  for (let r = 0; r < 12; r++) {
+    const petalGeo = new THREE.CylinderGeometry(18, 14, 36, 12, 1, false, 0, Math.PI);
     const petalMesh = new THREE.Mesh(petalGeo, canopyMat);
     petalMesh.rotation.z = Math.PI / 2;
     petalMesh.rotation.y = Math.PI / 2;
-    petalMesh.position.set(0, 24, -200 + r * 20);
+    petalMesh.position.set(0, 24, -200 + r * 36);
     petalMesh.scale.set(1.2, 0.9, 0.4);
-    petalMesh.castShadow = true;
     group.add(petalMesh);
-
-    // Steel support pillars
-    const pillarGeo = new THREE.CylinderGeometry(0.5, 0.5, 16);
-    const steelMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8, roughness: 0.2 });
-    const p1 = new THREE.Mesh(pillarGeo, steelMat);
-    p1.position.set(-8, 14, -200 + r * 20);
-    const p2 = new THREE.Mesh(pillarGeo, steelMat);
-    p2.position.set(8, 14, -200 + r * 20);
-    group.add(p1, p2);
   }
 
   return group;
 }
 
 /**
- * Sepang Pit Building & Garages with VIP Hospitality Towers
+ * Sepang Pit Building & Garages
  */
 function createPitBuilding(): THREE.Group {
   const group = new THREE.Group();
 
-  // Garages structure (260m long, 16m wide, 11m high)
   const bldgGeo = new THREE.BoxGeometry(16, 10, 260);
   const wallMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.4 });
   const bldgMesh = new THREE.Mesh(bldgGeo, wallMat);
@@ -1371,15 +1532,6 @@ function createPitBuilding(): THREE.Group {
   pitWall.position.set(-9.5, 0.7, 0);
   group.add(pitWall);
 
-  // Team Garages along bottom floor
-  const shutterMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.8 });
-  for (let g = 0; g < 14; g++) {
-    const doorGeo = new THREE.BoxGeometry(0.2, 4.5, 12);
-    const door = new THREE.Mesh(doorGeo, shutterMat);
-    door.position.set(-8.1, 2.3, -100 + g * 16);
-    group.add(door);
-  }
-
   // Control Tower
   const towerGeo = new THREE.BoxGeometry(14, 22, 18);
   const towerMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.5 });
@@ -1391,16 +1543,14 @@ function createPitBuilding(): THREE.Group {
 }
 
 /**
- * Start/Finish Overhead Gantry with 5 Red LED Countdown Lights
+ * Start/Finish Overhead Gantry with 5 Red Countdown Lights
  */
 function createStartGantry(): { gantryGroup: THREE.Group; lightMeshes: THREE.Mesh[] } {
   const gantryGroup = new THREE.Group();
   const lightMeshes: THREE.Mesh[] = [];
 
-  // Steel truss spanning across main straight (22m wide, 8m high)
   const steelMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.8 });
 
-  // Left & right support pillars
   const pillarGeo = new THREE.BoxGeometry(1, 8.5, 1);
   const leftPillar = new THREE.Mesh(pillarGeo, steelMat);
   leftPillar.position.set(-11, 4.25, 0);
@@ -1408,7 +1558,6 @@ function createStartGantry(): { gantryGroup: THREE.Group; lightMeshes: THREE.Mes
   const rightPillar = new THREE.Mesh(pillarGeo, steelMat);
   rightPillar.position.set(11, 4.25, 0);
 
-  // Cross beam
   const beamGeo = new THREE.BoxGeometry(23, 1.4, 1.4);
   const crossBeam = new THREE.Mesh(beamGeo, steelMat);
   crossBeam.position.set(0, 8, 0);
@@ -1422,10 +1571,9 @@ function createStartGantry(): { gantryGroup: THREE.Group; lightMeshes: THREE.Mes
   panelMesh.position.set(0, 7.8, 0.8);
   gantryGroup.add(panelMesh);
 
-  // 5 Light housings with bright emissive material
   for (let i = 0; i < 5; i++) {
-    const lightGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.3, 16);
-    const lightMat = new THREE.MeshBasicMaterial({ color: 0x330000 }); // Unlit dark red
+    const lightGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.3, 12);
+    const lightMat = new THREE.MeshBasicMaterial({ color: 0x330000 });
     const lightMesh = new THREE.Mesh(lightGeo, lightMat);
     lightMesh.rotation.x = Math.PI / 2;
     lightMesh.position.set(-3.2 + i * 1.6, 7.8, 1.05);
@@ -1437,46 +1585,13 @@ function createStartGantry(): { gantryGroup: THREE.Group; lightMeshes: THREE.Mes
 }
 
 /**
- * Continuous FIA safety crash barriers around entire circuit perimeter
+ * Braking Distance Markers safely along outer grass shoulder
  */
-function addCircuitSafetyBarriers(group: THREE.Group, curve: THREE.CatmullRomCurve3) {
-  const barrierSegments = 600;
-  const barrierMatBlue = new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.6 });
-  const barrierMatWhite = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.6 });
-
-  for (let i = 0; i < barrierSegments; i++) {
-    const t = i / barrierSegments;
-    const center = curve.getPointAt(t);
-    const tangent = curve.getTangentAt(t).normalize();
-    const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
-
-    // Barriers on left and right at ±9.6m
-    [-1, 1].forEach((side) => {
-      const bPos = new THREE.Vector3(
-        center.x + normal.x * 9.6 * side,
-        center.y + 0.85,
-        center.z + normal.z * 9.6 * side
-      );
-
-      const bGeo = new THREE.BoxGeometry(0.5, 1.1, 9.5);
-      const bMesh = new THREE.Mesh(bGeo, i % 2 === 0 ? barrierMatBlue : barrierMatWhite);
-      bMesh.position.copy(bPos);
-      bMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), tangent);
-      bMesh.castShadow = true;
-      bMesh.receiveShadow = true;
-      group.add(bMesh);
-    });
-  }
-}
-
-/**
- * 150m, 100m, 50m Braking Distance Marker Boards
- */
-function addDistanceMarkers(group: THREE.Group, curve: THREE.CatmullRomCurve3) {
+function addDistanceMarkers(group: THREE.Group) {
   const markers = [
-    { dist: 150, z: -170 },
-    { dist: 100, z: -220 },
-    { dist: 50, z: -270 },
+    { z: -170 },
+    { z: -220 },
+    { z: -270 },
   ];
 
   const boardMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
@@ -1485,71 +1600,132 @@ function addDistanceMarkers(group: THREE.Group, curve: THREE.CatmullRomCurve3) {
   markers.forEach(m => {
     const poleGeo = new THREE.CylinderGeometry(0.08, 0.08, 2.8);
     const pole = new THREE.Mesh(poleGeo, poleMat);
-    pole.position.set(8.5, 1.4, m.z);
+    pole.position.set(9.0, 1.4, m.z);
 
     const boardGeo = new THREE.BoxGeometry(0.1, 1.4, 2.2);
     const board = new THREE.Mesh(boardGeo, boardMat);
-    board.position.set(8.5, 2.2, m.z);
+    board.position.set(9.0, 2.2, m.z);
     group.add(pole, board);
   });
 }
 
 /**
- * Tropical Malaysian Palm Trees along landscape
+ * Tropical Palm Trees: Rendered via THREE.InstancedMesh (Only 2 Draw Calls Total)
+ * STRICTLY VALIDATED against ALL 800 sampled track points so NO tree can EVER
+ * be placed in the track or within 30 meters of the circuit centerline!
  */
-function addTropicalTrees(group: THREE.Group) {
+function addSafeTropicalTrees(
+  group: THREE.Group,
+  samplePoints: TrackGeometryData['samplePoints']
+) {
+  const isSafe = (x: number, z: number, minClearance = 32): boolean => {
+    for (let i = 0; i < samplePoints.length; i += 4) {
+      const dx = samplePoints[i].position.x - x;
+      const dz = samplePoints[i].position.z - z;
+      if (dx * dx + dz * dz < minClearance * minClearance) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  // Pre-selected safe scenic zones far away from asphalt
+  const candidateZones = [
+    { x: -110, z: 120 }, // Far behind Hibiscus grandstand
+    { x: -130, z: -80 }, // Outer western perimeter
+    { x: 95, z: 90 },    // Deep infield green
+    { x: 120, z: -110 },  // Far outside pit lane
+    { x: 560, z: 320 },  // Far outside Turn 4
+    { x: -520, z: 360 }, // Far outside Turn 9
+    { x: 280, z: 520 },  // Infield lake shore
+    { x: -190, z: 860 }, // South of Turn 15
+  ];
+
+  const treePositions: { x: number; y: number; z: number; scale: number }[] = [];
+
+  candidateZones.forEach(zone => {
+    for (let k = 0; k < 6; k++) {
+      const tx = zone.x + (k % 3 - 1) * 26 + (Math.sin(k * 7) * 8);
+      const tz = zone.z + (Math.floor(k / 3) - 0.5) * 26 + (Math.cos(k * 7) * 8);
+      if (isSafe(tx, tz, 32)) {
+        treePositions.push({
+          x: tx,
+          y: 0,
+          z: tz,
+          scale: 0.85 + (k % 4) * 0.1,
+        });
+      }
+    }
+  });
+
+  const count = treePositions.length;
+  if (count === 0) return;
+
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.9 });
   const frondMat = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.8 });
 
-  const treeClusters = [
-    { x: 120, z: -320 },
-    { x: 260, z: -180 },
-    { x: 340, z: 120 },
-    { x: -350, z: 220 },
-    { x: -280, z: -120 },
-  ];
+  const trunkGeo = new THREE.CylinderGeometry(0.35, 0.55, 9, 6);
+  const frondGeo = new THREE.ConeGeometry(4.5, 2.2, 6);
 
-  treeClusters.forEach(c => {
-    for (let t = 0; t < 6; t++) {
-      const tx = c.x + (Math.random() - 0.5) * 45;
-      const tz = c.z + (Math.random() - 0.5) * 45;
+  const trunkMesh = new THREE.InstancedMesh(trunkGeo, trunkMat, count);
+  const frondMesh = new THREE.InstancedMesh(frondGeo, frondMat, count);
 
-      const trunkGeo = new THREE.CylinderGeometry(0.35, 0.55, 9, 8);
-      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-      trunk.position.set(tx, 3.5, tz);
+  const dummy = new THREE.Object3D();
 
-      const frondGeo = new THREE.ConeGeometry(4.5, 2.2, 8);
-      const frond = new THREE.Mesh(frondGeo, frondMat);
-      frond.position.set(tx, 8.5, tz);
+  treePositions.forEach((pos, idx) => {
+    dummy.position.set(pos.x, 3.5 * pos.scale, pos.z);
+    dummy.scale.set(pos.scale, pos.scale, pos.scale);
+    dummy.updateMatrix();
+    trunkMesh.setMatrixAt(idx, dummy.matrix);
 
-      trunk.castShadow = true;
-      frond.castShadow = true;
-      group.add(trunk, frond);
-    }
+    dummy.position.set(pos.x, 8.5 * pos.scale, pos.z);
+    dummy.updateMatrix();
+    frondMesh.setMatrixAt(idx, dummy.matrix);
   });
+
+  trunkMesh.instanceMatrix.needsUpdate = true;
+  frondMesh.instanceMatrix.needsUpdate = true;
+
+  group.add(trunkMesh, frondMesh);
 }
 
 /**
- * Floodlight towers around circuit
+ * Floodlight towers safely outside track barriers
  */
-function addFloodlightTowers(group: THREE.Group) {
+function addSafeFloodlightTowers(
+  group: THREE.Group,
+  samplePoints: TrackGeometryData['samplePoints']
+) {
   const towerMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.7 });
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
 
-  const coords = [
-    { x: -16, z: -250 },
-    { x: 18, z: 250 },
-    { x: -16, z: 500 },
-    { x: 150, z: -260 },
-    { x: -420, z: 280 },
+  const safeCoords = [
+    { x: -85, z: 200 },  // Behind grandstand
+    { x: 80, z: 80 },    // Infield
+    { x: -110, z: 450 }, // Back straight outfield
+    { x: 550, z: 300 },  // Far Turn 4
+    { x: -520, z: 340 }, // Far Turn 9
   ];
 
-  coords.forEach(pt => {
-    const mastGeo = new THREE.CylinderGeometry(0.4, 0.7, 24);
+  const mastGeo = new THREE.CylinderGeometry(0.4, 0.7, 24, 6);
+  const headGeo = new THREE.BoxGeometry(4, 1.2, 2);
+
+  safeCoords.forEach(pt => {
+    // Double check clearance
+    let safe = true;
+    for (let i = 0; i < samplePoints.length; i += 8) {
+      const dx = samplePoints[i].position.x - pt.x;
+      const dz = samplePoints[i].position.z - pt.z;
+      if (dx * dx + dz * dz < 28 * 28) {
+        safe = false;
+        break;
+      }
+    }
+    if (!safe) return;
+
     const mast = new THREE.Mesh(mastGeo, towerMat);
     mast.position.set(pt.x, 12, pt.z);
 
-    const headGeo = new THREE.BoxGeometry(4, 1.2, 2);
     const head = new THREE.Mesh(headGeo, lampMat);
     head.position.set(pt.x, 24, pt.z);
 

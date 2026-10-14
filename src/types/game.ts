@@ -97,6 +97,18 @@ export interface TelemetryData {
   deltaToBest?: number;
   slipstreamActive: boolean;
   trackProgress: number;
+  worldPosition?: { x: number; y: number; z: number };
+  headingAngle?: number;
+  competitors?: {
+    id: string;
+    name: string;
+    number: number;
+    position: number;
+    progress: number;
+    color: string;
+    x: number;
+    z: number;
+  }[];
 }
 
 export interface CircuitWaypoint {
