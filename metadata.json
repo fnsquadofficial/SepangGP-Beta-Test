@@ -1,0 +1,8 @@
+{
+  "name": "Sepang Grand Prix - 3D Circuit Racer",
+  "description": "High-performance 3D racing simulation modeled on Malaysia's Sepang International Circuit featuring Formula 1 and GT3 cars, intelligent AI championship grid racing, dual cameras, and telemetry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
