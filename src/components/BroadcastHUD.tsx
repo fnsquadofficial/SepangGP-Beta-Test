@@ -192,34 +192,38 @@ export const BroadcastHUD: React.FC<BroadcastHUDProps> = ({
           <div className="text-[10px] uppercase font-bold tracking-wider text-cyan-400 mb-1">
             SEPANG · 5.543 KM
           </div>
-          <svg className="w-32 h-32 md:w-40 md:h-40" viewBox="-180 -500 550 1050">
-            {/* Track Silhouette */}
+          <svg className="w-32 h-32 md:w-44 md:h-44" viewBox="-520 -390 1080 1270">
+            {/* Authentic Sepang Track Silhouette */}
             <path
-              d="M 45 0 L 45 -380 C 45 -420, 60 -450, 85 -430 C 110 -400, 150 -360, 200 -300 C 240 -240, 260 -150, 240 -70 C 210 20, 170 80, 200 140 C 250 200, 300 240, 280 290 C 250 330, 190 350, 140 330 C 100 280, 80 200, 60 90 C 30 20, -30 -30, -60 -90 L -95 -210 L -95 380 C -95 440, -40 470, 20 440 L 45 320 Z"
+              d="M 0 0 L 0 -100 L 0 -200 L 0 -301 L 2 -314 L 9 -326 L 19 -334 L 32 -338 L 45 -337 L 59 -331 L 69 -319 L 73 -303 L 68 -284 L 53 -251 L 54 -240 L 63 -229 L 74 -225 L 90 -227 L 106 -236 L 137 -257 L 155 -266 L 176 -271 L 197 -272 L 220 -270 L 278 -260 L 304 -249 L 331 -232 L 347 -216 L 366 -193 L 379 -168 L 386 -143 L 420 -3 L 453 103 L 477 174 L 493 219 L 498 235 L 497 246 L 490 256 L 477 258 L 370 269 L 314 276 L 246 288 L 220 298 L 200 310 L 180 331 L 166 353 L 159 375 L 156 397 L 158 423 L 166 450 L 178 469 L 213 508 L 223 527 L 230 555 L 229 579 L 224 602 L 215 620 L 200 636 L -45 819 L -56 819 L -69 813 L -143 773 L -149 762 L -151 750 L -147 565 L -154 391 L -162 296 L -169 286 L -181 282 L -195 289 L -237 354 L -253 367 L -276 376 L -299 379 L -332 376 L -359 369 L -385 361 L -418 342 L -451 316 L -458 302 L -459 289 L -456 275 L -447 264 L -257 67 L -251 53 L -248 34 L -252 13 L -285 -67 L -290 -88 L -291 -112 L -289 -134 L -279 -173 L -266 -199 L -250 -216 L -217 -237 L -194 -243 L -179 -244 L -164 -232 L -157 -211 L -139 -41 L -122 128 L -104 297 L -87 467 L -69 636 L -59 649 L -40 659 L -23 656 L -6 642 L 0 618 L 0 450 L 0 300 L 0 150 Z"
               fill="none"
-              stroke="#334155"
-              strokeWidth="28"
+              stroke="#1e293b"
+              strokeWidth="48"
               strokeLinejoin="round"
               strokeLinecap="round"
             />
             {/* Active Track Centerline */}
             <path
-              d="M 45 0 L 45 -380 C 45 -420, 60 -450, 85 -430 C 110 -400, 150 -360, 200 -300 C 240 -240, 260 -150, 240 -70 C 210 20, 170 80, 200 140 C 250 200, 300 240, 280 290 C 250 330, 190 350, 140 330 C 100 280, 80 200, 60 90 C 30 20, -30 -30, -60 -90 L -95 -210 L -95 380 C -95 440, -40 470, 20 440 L 45 320 Z"
+              d="M 0 0 L 0 -100 L 0 -200 L 0 -301 L 2 -314 L 9 -326 L 19 -334 L 32 -338 L 45 -337 L 59 -331 L 69 -319 L 73 -303 L 68 -284 L 53 -251 L 54 -240 L 63 -229 L 74 -225 L 90 -227 L 106 -236 L 137 -257 L 155 -266 L 176 -271 L 197 -272 L 220 -270 L 278 -260 L 304 -249 L 331 -232 L 347 -216 L 366 -193 L 379 -168 L 386 -143 L 420 -3 L 453 103 L 477 174 L 493 219 L 498 235 L 497 246 L 490 256 L 477 258 L 370 269 L 314 276 L 246 288 L 220 298 L 200 310 L 180 331 L 166 353 L 159 375 L 156 397 L 158 423 L 166 450 L 178 469 L 213 508 L 223 527 L 230 555 L 229 579 L 224 602 L 215 620 L 200 636 L -45 819 L -56 819 L -69 813 L -143 773 L -149 762 L -151 750 L -147 565 L -154 391 L -162 296 L -169 286 L -181 282 L -195 289 L -237 354 L -253 367 L -276 376 L -299 379 L -332 376 L -359 369 L -385 361 L -418 342 L -451 316 L -458 302 L -459 289 L -456 275 L -447 264 L -257 67 L -251 53 L -248 34 L -252 13 L -285 -67 L -290 -88 L -291 -112 L -289 -134 L -279 -173 L -266 -199 L -250 -216 L -217 -237 L -194 -243 L -179 -244 L -164 -232 L -157 -211 L -139 -41 L -122 128 L -104 297 L -87 467 L -69 636 L -59 649 L -40 659 L -23 656 L -6 642 L 0 618 L 0 450 L 0 300 L 0 150 Z"
               fill="none"
               stroke="#64748b"
-              strokeWidth="12"
+              strokeWidth="20"
               strokeLinejoin="round"
               strokeLinecap="round"
             />
             {/* Start/Finish Line marker */}
-            <line x1="25" y1="0" x2="65" y2="0" stroke="#f8fafc" strokeWidth="6" />
+            <line x1="-30" y1="0" x2="30" y2="0" stroke="#f8fafc" strokeWidth="12" />
 
             {/* Turn Labels */}
-            <text x="95" y="-440" fill="#94a3b8" fontSize="28" fontWeight="bold">T1</text>
-            <text x="255" y="-60" fill="#94a3b8" fontSize="28" fontWeight="bold">T4</text>
-            <text x="145" y="370" fill="#94a3b8" fontSize="28" fontWeight="bold">T9</text>
-            <text x="-140" y="-220" fill="#94a3b8" fontSize="28" fontWeight="bold">T14</text>
-            <text x="-50" y="480" fill="#94a3b8" fontSize="28" fontWeight="bold">T15</text>
+            <text x="35" y="-355" fill="#38bdf8" fontSize="36" fontWeight="bold">T1</text>
+            <text x="75" y="-270" fill="#38bdf8" fontSize="36" fontWeight="bold">T2</text>
+            <text x="495" y="275" fill="#38bdf8" fontSize="36" fontWeight="bold">T4</text>
+            <text x="195" y="340" fill="#94a3b8" fontSize="32" fontWeight="bold">T5/6</text>
+            <text x="-485" y="310" fill="#38bdf8" fontSize="36" fontWeight="bold">T9</text>
+            <text x="-315" y="-95" fill="#94a3b8" fontSize="32" fontWeight="bold">T11</text>
+            <text x="-195" y="-245" fill="#38bdf8" fontSize="36" fontWeight="bold">T14</text>
+            <text x="-40" y="700" fill="#ef4444" fontSize="36" fontWeight="bold">T15</text>
+            <text x="-75" y="10" fill="#f8fafc" fontSize="28" fontWeight="bold">S/F</text>
           </svg>
         </div>
       </div>
@@ -315,7 +319,7 @@ export const BroadcastHUD: React.FC<BroadcastHUDProps> = ({
           {/* Steer Left / Right Buttons */}
           <div className="flex items-center gap-3">
             <button
-              onPointerDown={() => onTouchSteer(-1)}
+              onPointerDown={() => onTouchSteer(1)}
               onPointerUp={() => onTouchSteer(0)}
               onPointerLeave={() => onTouchSteer(0)}
               className="w-16 h-16 rounded-2xl glass-panel active:bg-cyan-500/40 border border-white/20 text-white font-bold text-xl flex items-center justify-center touch-none select-none shadow-lg active:scale-95"
@@ -323,7 +327,7 @@ export const BroadcastHUD: React.FC<BroadcastHUDProps> = ({
               ◀
             </button>
             <button
-              onPointerDown={() => onTouchSteer(1)}
+              onPointerDown={() => onTouchSteer(-1)}
               onPointerUp={() => onTouchSteer(0)}
               onPointerLeave={() => onTouchSteer(0)}
               className="w-16 h-16 rounded-2xl glass-panel active:bg-cyan-500/40 border border-white/20 text-white font-bold text-xl flex items-center justify-center touch-none select-none shadow-lg active:scale-95"

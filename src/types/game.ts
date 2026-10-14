@@ -26,8 +26,8 @@ export interface VehicleConfig {
 }
 
 export interface SetupSettings {
-  aeroDownforce: number; // 0 (low drag/high speed) to 100 (high downforce/fast cornering)
-  brakeBias: number; // 50-65% front
+  aeroDownforce: number;
+  brakeBias: number;
   tractionControl: boolean;
   steeringAssist: boolean;
 }
@@ -53,12 +53,11 @@ export interface AIDriverProfile {
   carClass: VehicleClass;
   color: string;
   secondaryColor: string;
-  skillLevel: number; // 0.85 to 1.15 multiplier
+  skillLevel: number;
   aggression: number;
-  // Dynamic state during race
-  trackProgress: number; // normalized 0 to 1 along circuit
-  lateralOffset: number; // deviation from racing line (-5 to +5 meters)
-  speed: number; // km/h
+  trackProgress: number;
+  lateralOffset: number;
+  speed: number;
   lap: number;
   lastLapTime: number;
   bestLapTime: number;
@@ -70,29 +69,34 @@ export interface AIDriverProfile {
 
 export interface TelemetryData {
   speed: number; // km/h
-  rpm: number; // 0 to 15000
+  rpm: number;
   maxRpm: number;
-  gear: number; // 1-8, 0 = N, -1 = R
-  throttle: number; // 0 to 1
-  brake: number; // 0 to 1
-  steering: number; // -1 to 1
-  slipstreamActive: boolean;
-  drsAvailable: boolean;
-  drsActive: boolean;
-  onCurb: boolean;
-  onGrass: boolean;
-  gForceLat: number;
-  gForceLong: number;
+  gear: number; // 1-8, 0 = N
+  throttle?: number;
+  brake?: number;
+  steering?: number;
+  lap: number;
   currentLap: number;
   totalLaps: number;
+  lapTime: number;
   currentLapTime: number;
   bestLapTime: number;
   lastLapTime: number;
   sectorTimes: { s1: number; s2: number; s3: number };
   currentSector: 1 | 2 | 3;
-  deltaToBest: number;
   position: number;
   totalDrivers: number;
+  totalRacers: number;
+  gapToLeader: string;
+  drsAvailable: boolean;
+  drsActive: boolean;
+  onCurb: boolean;
+  onGrass: boolean;
+  gForceLat?: number;
+  gForceLong?: number;
+  deltaToBest?: number;
+  slipstreamActive: boolean;
+  trackProgress: number;
 }
 
 export interface CircuitWaypoint {

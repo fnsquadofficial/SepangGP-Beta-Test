@@ -53,25 +53,28 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
   const animFrameIdRef = useRef<number | null>(null);
   const clockRef = useRef<THREE.Clock>(new THREE.Clock());
 
-  // Reusable math objects (Zero GC in animation loop)
-  const tempVec = useRef(new THREE.Vector3());
-  const camTargetPos = useRef(new THREE.Vector3());
-  const camLookAtPos = useRef(new THREE.Vector3());
-  const smoothedCamPos = useRef(new THREE.Vector3());
+  // Camera damping state
+  const camHeadingRef = useRef<number>(0);
   const smoothedLookAt = useRef(new THREE.Vector3());
+  const smoothedCamPos = useRef(new THREE.Vector3());
   const isCamInitialized = useRef(false);
 
-  // Tire smoke & rain spray particle systems
-  const smokeParticlesRef = useRef<{ mesh: THREE.Mesh; life: number; maxLife: number; vel: THREE.Vector3 }[]>([]);
-  const smokeGroupRef = useRef<THREE.Group>(new THREE.Group());
-
-  // Input ref to always read latest without re-triggering effect
+  // Live input & racing refs to avoid re-triggering main useEffect
   const inputsRef = useRef(inputState);
   useEffect(() => {
     inputsRef.current = inputState;
   }, [inputState]);
 
-  // Track finished state to fire callback once
+  const isRacingRef = useRef(isRacing);
+  useEffect(() => {
+    isRacingRef.current = isRacing;
+  }, [isRacing]);
+
+  const cameraModeRef = useRef(cameraMode);
+  useEffect(() => {
+    cameraModeRef.current = cameraMode;
+  }, [cameraMode]);
+
   const finishedFiredRef = useRef(false);
 
   // Handle countdown starting lights on 3D gantry
@@ -81,7 +84,6 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     if (!lights || lights.length < 5) return;
 
     if (countdownStep >= 1 && countdownStep <= 5) {
-      // Light up from left to right
       lights.forEach((mesh, index) => {
         const mat = mesh.material as THREE.MeshBasicMaterial;
         if (index < countdownStep) {
@@ -99,7 +101,6 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       audioEngine.playCountdownBeep(true);
       engineRef.current?.startRaceTimer();
     } else {
-      // Reset all lights
       lights.forEach((mesh) => {
         (mesh.material as THREE.MeshBasicMaterial).color.setHex(0x330000);
       });
@@ -114,7 +115,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     }
   }, [resetTrigger]);
 
-  // Main Scene Setup
+  // Main Scene Setup (Only re-runs if vehicle class, weather, or laps change)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -122,15 +123,15 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
-    // 1. Scene & Procedural Studio Reflection (RoomEnvironment)
+    // 1. Scene
     const scene = new THREE.Scene();
     sceneRef.current = scene;
 
     // 2. Camera setup
-    const camera = new THREE.PerspectiveCamera(65, width / height, 0.1, 2000);
+    const camera = new THREE.PerspectiveCamera(65, width / height, 0.1, 2500);
     cameraRef.current = camera;
 
-    // 3. Modern WebGL Renderer
+    // 3. WebGL Renderer
     const isHeadless = navigator.webdriver || /HeadlessChrome/i.test(navigator.userAgent);
     const renderer = new THREE.WebGLRenderer({ antialias: !isHeadless, powerPreference: 'high-performance' });
     renderer.setSize(width, height);
@@ -145,34 +146,29 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // Generate zero-dependency procedural reflection environment
+    // Reflection environment
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
     pmremGenerator.dispose();
 
-    // 4. Lighting Rig & Sky Colors
+    // 4. Lighting & Sky
     if (weather === 'sunset') {
       scene.background = new THREE.Color(0xfdba74);
-      scene.fog = new THREE.FogExp2(0xfdba74, 0.0018);
+      scene.fog = new THREE.FogExp2(0xfdba74, 0.0016);
 
       const sunLight = new THREE.DirectionalLight(0xff7733, 2.8);
       sunLight.position.set(200, 50, -300);
       sunLight.castShadow = true;
       sunLight.shadow.mapSize.set(1024, 1024);
       sunLight.shadow.camera.near = 10;
-      sunLight.shadow.camera.far = 800;
-      sunLight.shadow.camera.left = -250;
-      sunLight.shadow.camera.right = 250;
-      sunLight.shadow.camera.top = 250;
-      sunLight.shadow.camera.bottom = -250;
-      sunLight.shadow.bias = -0.0005;
+      sunLight.shadow.camera.far = 1000;
       scene.add(sunLight);
 
       const ambientLight = new THREE.AmbientLight(0xc2410c, 1.2);
       scene.add(ambientLight);
     } else if (weather === 'wet') {
       scene.background = new THREE.Color(0x334155);
-      scene.fog = new THREE.FogExp2(0x334155, 0.0028);
+      scene.fog = new THREE.FogExp2(0x334155, 0.0026);
 
       const sunLight = new THREE.DirectionalLight(0x94a3b8, 1.6);
       sunLight.position.set(100, 150, 100);
@@ -182,21 +178,15 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       const ambientLight = new THREE.AmbientLight(0x475569, 1.4);
       scene.add(ambientLight);
     } else {
-      // Daylight Tropical Malaysia
       scene.background = new THREE.Color(0x38bdf8);
-      scene.fog = new THREE.FogExp2(0x7dd3fc, 0.0014);
+      scene.fog = new THREE.FogExp2(0x7dd3fc, 0.0012);
 
       const sunLight = new THREE.DirectionalLight(0xfffaed, 3.2);
       sunLight.position.set(150, 300, 150);
       sunLight.castShadow = true;
       sunLight.shadow.mapSize.set(1024, 1024);
       sunLight.shadow.camera.near = 10;
-      sunLight.shadow.camera.far = 1000;
-      sunLight.shadow.camera.left = -300;
-      sunLight.shadow.camera.right = 300;
-      sunLight.shadow.camera.top = 300;
-      sunLight.shadow.camera.bottom = -300;
-      sunLight.shadow.bias = -0.0004;
+      sunLight.shadow.camera.far = 1200;
       scene.add(sunLight);
 
       const ambientLight = new THREE.AmbientLight(0xe0f2fe, 1.1);
@@ -208,6 +198,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     circuitDataRef.current = circuitData;
     scene.add(circuitData.trackMesh);
     scene.add(circuitData.curbsGroup);
+    scene.add(circuitData.barriersGroup);
     scene.add(circuitData.decorationsGroup);
 
     // 6. Build Physics Engine
@@ -226,9 +217,10 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     playerCarRef.current = playerCar;
     scene.add(playerCar.root);
 
-    // Initial position on grid
+    // Initial position on starting grid
     playerCar.root.position.copy(engine.position);
     playerCar.root.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), engine.forward);
+    camHeadingRef.current = Math.atan2(engine.forward.x, engine.forward.z);
 
     // 8. Build AI Rival Cars
     const aiMeshes: Car3DInstance[] = [];
@@ -239,10 +231,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     });
     aiCarMeshesRef.current = aiMeshes;
 
-    // 9. Particle System Group
-    scene.add(smokeGroupRef.current);
-
-    // Start Audio
+    // Start Procedural Audio
     audioEngine.start(vehicleClass);
 
     // Resize Handler
@@ -256,18 +245,19 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
     };
     window.addEventListener('resize', handleResize);
 
-    // 10. Animation & Simulation Render Loop
+    // 9. Simulation & Render Loop
     finishedFiredRef.current = false;
     let lastLapChecked = 1;
 
     const tick = () => {
       const delta = clockRef.current.getDelta();
 
-      // Read current inputs
+      // Read current inputs and active racing status from refs
       const currentInputs = inputsRef.current;
+      const racingActive = isRacingRef.current;
 
       // Update simulation physics
-      engine.update(delta, currentInputs, isRacing);
+      engine.update(delta, currentInputs, racingActive);
 
       // Check lap transitions
       if (engine.currentLap > lastLapChecked) {
@@ -285,21 +275,21 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       // Sync 3D player car position and orientation
       playerCar.root.position.copy(engine.position);
 
-      // Smooth vehicle body tilt and bank with proper quaternion multiplication
+      // Smooth vehicle body tilt and bank with roll angle
       const targetQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), engine.forward);
       const rollAmount = -engine.steeringAngle * Math.min(1.0, engine.speedKmh / 220) * 0.08;
       const rollQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), rollAmount);
       targetQuat.multiply(rollQuat);
       playerCar.root.quaternion.slerp(targetQuat, 0.35);
 
-      // Steer wheels into turn & spin tires
-      playerCar.setSteering(engine.steeringAngle * 0.45);
+      // Steer front wheels & spin tires
+      playerCar.setSteering(engine.steeringAngle * 0.6);
       const distanceDelta = (engine.speedKmh / 3.6) * delta;
       playerCar.spinWheels(distanceDelta);
       playerCar.setDrsActive(engine.drsActive);
       playerCar.setBraking(currentInputs.brake > 0.1);
 
-      // Sync AI cars along track
+      // Sync AI cars along Sepang circuit
       engine.aiDrivers.forEach((ai, idx) => {
         const mesh = aiMeshes[idx];
         if (!mesh) return;
@@ -318,56 +308,69 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
         mesh.spinWheels((ai.speed / 3.6) * delta);
       });
 
-      // Update Camera with Silky Smooth Damping (Zero turning twitch or glitch)
-      if (cameraMode === 'cockpit') {
-        // Rock-solid cockpit camera anchored to driver's helmet view
-        const eyeOffset = vehicleClass === 'f1' ? new THREE.Vector3(0, 0.72, -0.15) : new THREE.Vector3(-0.35, 0.88, 0.1);
+      // --- BUTTERY SMOOTH CINEMATIC CAMERA (ZERO JITTER / ZERO SNAP) ---
+      const activeCameraMode = cameraModeRef.current;
+
+      if (activeCameraMode === 'cockpit') {
+        // Cockpit Helmet Cam
+        const eyeOffset = vehicleClass === 'f1'
+          ? new THREE.Vector3(0, 0.72, -0.15)
+          : new THREE.Vector3(-0.35, 0.88, 0.1);
         const worldEye = eyeOffset.clone().applyQuaternion(playerCar.root.quaternion).add(playerCar.root.position);
         camera.position.copy(worldEye);
 
-        const lookTarget = worldEye.clone().add(engine.forward.clone().multiplyScalar(35));
-        lookTarget.y += 0.1;
+        const lookTarget = worldEye.clone().add(engine.forward.clone().multiplyScalar(15)).add(new THREE.Vector3(0, 0.25, 0));
         smoothedLookAt.current.lerp(lookTarget, 0.25);
         camera.lookAt(smoothedLookAt.current);
 
         camera.fov = 72;
         camera.updateProjectionMatrix();
-      } else if (cameraMode === 'helicopter') {
-        // High aerial broadcast view
-        camTargetPos.current.set(engine.position.x - 30, engine.position.y + 65, engine.position.z + 50);
-        camera.position.lerp(camTargetPos.current, 0.05);
+      } else if (activeCameraMode === 'helicopter') {
+        // Helicopter aerial broadcast
+        const heliTarget = new THREE.Vector3(engine.position.x - 35, engine.position.y + 70, engine.position.z + 55);
+        camera.position.lerp(heliTarget, 0.05);
         camera.lookAt(engine.position);
       } else {
-        // Broadcast Chase Camera: BOTH camera position AND look-at target are smoothly damped
-        const chaseDist = vehicleClass === 'f1' ? 7.4 : 7.0;
-        const chaseHeight = 2.45;
-
-        tempVec.current.copy(engine.forward).negate().multiplyScalar(chaseDist);
-        tempVec.current.y += chaseHeight;
-        camTargetPos.current.copy(engine.position).add(tempVec.current);
-
-        camLookAtPos.current.copy(engine.position).add(engine.forward.clone().multiplyScalar(18));
-        camLookAtPos.current.y += 0.8;
+        // Broadcast Chase Camera:
+        // Interpolate camera heading angle smoothly, avoiding yaw snapping or wobbling
+        const carHeading = Math.atan2(engine.forward.x, engine.forward.z);
 
         if (!isCamInitialized.current) {
-          smoothedCamPos.current.copy(camTargetPos.current);
-          smoothedLookAt.current.copy(camLookAtPos.current);
+          camHeadingRef.current = carHeading;
+          smoothedLookAt.current.copy(engine.position).add(new THREE.Vector3(0, 1.2, 0));
           isCamInitialized.current = true;
-        } else {
-          smoothedCamPos.current.lerp(camTargetPos.current, 0.12);
-          smoothedLookAt.current.lerp(camLookAtPos.current, 0.14);
         }
 
-        // Subtle curb vibration
+        // Angular difference with wrap-around
+        let angleDiff = carHeading - camHeadingRef.current;
+        angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
+        camHeadingRef.current += angleDiff * Math.min(1.0, 4.2 * delta);
+
+        const chaseDist = vehicleClass === 'f1' ? 7.6 : 7.2;
+        const chaseHeight = 2.45;
+
+        const targetCamX = engine.position.x - Math.sin(camHeadingRef.current) * chaseDist;
+        const targetCamZ = engine.position.z - Math.cos(camHeadingRef.current) * chaseDist;
+        const targetCamY = engine.position.y + chaseHeight;
+
+        smoothedCamPos.current.lerp(new THREE.Vector3(targetCamX, targetCamY, targetCamZ), 0.35);
+
+        // Subtle curb rumble
         if (engine.onCurb) {
-          smoothedCamPos.current.x += (Math.random() - 0.5) * 0.08;
-          smoothedCamPos.current.y += (Math.random() - 0.5) * 0.08;
+          smoothedCamPos.current.x += (Math.random() - 0.5) * 0.05;
+          smoothedCamPos.current.y += (Math.random() - 0.5) * 0.05;
         }
 
         camera.position.copy(smoothedCamPos.current);
+
+        // Look at point: 4 meters ahead of the car (stable horizon)
+        const lookTarget = engine.position.clone()
+          .add(new THREE.Vector3(0, 1.2, 0))
+          .add(engine.forward.clone().multiplyScalar(4.0));
+        smoothedLookAt.current.lerp(lookTarget, 0.35);
         camera.lookAt(smoothedLookAt.current);
 
-        // Dynamic FOV widening at high speed
+        // Dynamic FOV widening at high speeds
         const speedFovBonus = Math.max(0, (engine.speedKmh - 180) / 165) * 12;
         camera.fov = THREE.MathUtils.lerp(camera.fov, 65 + speedFovBonus, 0.1);
         camera.updateProjectionMatrix();
@@ -385,7 +388,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
         lateralSlip: engine.lateralSlip,
       });
 
-      // Dispatch real-time telemetry to parent HUD
+      // Telemetry update to HUD
       onTelemetryUpdate(engine.getTelemetry());
 
       // Render Scene
@@ -400,13 +403,12 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       window.removeEventListener('resize', handleResize);
       audioEngine.stop();
 
-      // Clean up Three.js resources
       renderer.dispose();
       circuitData.trackMesh.geometry.dispose();
       (circuitData.trackMesh.material as THREE.Material).dispose();
       scene.clear();
     };
-  }, [vehicleClass, weather, totalLaps, isRacing]);
+  }, [vehicleClass, weather, totalLaps]); // Notice isRacing removed: scene stays intact on start!
 
   return (
     <div

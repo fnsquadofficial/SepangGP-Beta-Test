@@ -49,14 +49,13 @@ export default function App() {
     const drs = Boolean(keys['ShiftLeft'] || keys['ShiftRight'] || keys['KeyB']);
     const handbrake = Boolean(keys['Space']);
 
-    setInputState((prev) => ({
-      ...prev,
-      throttle: Math.max(prev.throttle > 0 && !throttle ? 0 : prev.throttle, throttle),
-      brake: Math.max(prev.brake > 0 && !brake ? 0 : prev.brake, brake),
-      steer: steer !== 0 ? steer : prev.steer,
-      drs: drs || prev.drs,
-      handbrake: handbrake || prev.handbrake,
-    }));
+    setInputState({
+      throttle,
+      brake,
+      steer,
+      drs,
+      handbrake,
+    });
   }, []);
 
   // Global Keyboard event listeners
@@ -90,29 +89,7 @@ export default function App() {
 
     const handleKeyUp = (e: KeyboardEvent) => {
       keysDownRef.current[e.code] = false;
-
-      // Handle releasing steering
-      const keys = keysDownRef.current;
-      let steer = 0;
-      if (keys['KeyA'] || keys['ArrowLeft']) steer += 1;
-      if (keys['KeyD'] || keys['ArrowRight']) steer -= 1;
-
-      let throttle = 0;
-      if (keys['KeyW'] || keys['ArrowUp']) throttle = 1;
-
-      let brake = 0;
-      if (keys['KeyS'] || keys['ArrowDown']) brake = 1;
-
-      const drs = Boolean(keys['ShiftLeft'] || keys['ShiftRight'] || keys['KeyB']);
-      const handbrake = Boolean(keys['Space']);
-
-      setInputState({
-        throttle,
-        brake,
-        steer,
-        drs,
-        handbrake,
-      });
+      updateInputs();
     };
 
     window.addEventListener('keydown', handleKeyDown);

@@ -43,9 +43,9 @@ export const VEHICLE_CONFIGS: Record<VehicleClass, VehicleConfig> = {
 };
 
 export const DEFAULT_AI_DRIVERS: Omit<AIDriverProfile, 'trackProgress' | 'lateralOffset' | 'speed' | 'lap' | 'lastLapTime' | 'bestLapTime' | 'currentSector' | 'sectorTimes' | 'position' | 'gapToLeader'>[] = [
-  { id: 'ai-1', name: 'Farhan Harith', number: 44, team: 'Petronas Sepang Racing', carClass: 'f1', color: '#00a19b', secondaryColor: '#000000', skillLevel: 1.05, aggression: 0.9 },
-  { id: 'ai-2', name: 'Marcus Vance', number: 1, team: 'Apex Works GP', carClass: 'f1', color: '#1e3a8a', secondaryColor: '#dc2626', skillLevel: 1.08, aggression: 0.95 },
-  { id: 'ai-3', name: 'Luca Rossi', number: 16, team: 'Maranello Corse', carClass: 'f1', color: '#dc2626', secondaryColor: '#ffffff', skillLevel: 1.02, aggression: 0.85 },
+  { id: 'ai-1', name: 'Farhan Harith', number: 44, team: 'Petronas Sepang Racing', carClass: 'f1', color: '#00a19b', secondaryColor: '#000000', skillLevel: 1.03, aggression: 0.9 },
+  { id: 'ai-2', name: 'Marcus Vance', number: 1, team: 'Apex Works GP', carClass: 'f1', color: '#1e3a8a', secondaryColor: '#dc2626', skillLevel: 1.05, aggression: 0.95 },
+  { id: 'ai-3', name: 'Luca Rossi', number: 16, team: 'Maranello Corse', carClass: 'f1', color: '#dc2626', secondaryColor: '#ffffff', skillLevel: 1.01, aggression: 0.85 },
   { id: 'ai-4', name: 'Kenji Takahashi', number: 22, team: 'Suzuka Motorsport', carClass: 'gt3', color: '#ffffff', secondaryColor: '#dc2626', skillLevel: 0.98, aggression: 0.8 },
   { id: 'ai-5', name: 'Ethan Miller', number: 11, team: 'Bulls Racing Tech', carClass: 'f1', color: '#172554', secondaryColor: '#eab308', skillLevel: 0.99, aggression: 0.88 },
   { id: 'ai-6', name: 'Chloe Dubois', number: 10, team: 'Alpine Endurance', carClass: 'gt3', color: '#2563eb', secondaryColor: '#ec4899', skillLevel: 0.95, aggression: 0.75 },
@@ -57,6 +57,9 @@ export class RacingPhysicsEngine {
   public trackLength: number;
   public vehicleClass: VehicleClass;
   public config: VehicleConfig;
+
+  // Pre-sampled points for ultra-fast broadphase search
+  private samplePoints: { position: THREE.Vector3; progress: number }[] = [];
 
   // Player state
   public position: THREE.Vector3 = new THREE.Vector3();
@@ -101,17 +104,25 @@ export class RacingPhysicsEngine {
     this.config = VEHICLE_CONFIGS[vehicleClass];
     this.totalLaps = totalLaps;
 
+    // Cache 500 reference points along the track
+    const SAMPLES = 500;
+    for (let i = 0; i < SAMPLES; i++) {
+      const t = i / SAMPLES;
+      this.samplePoints.push({
+        position: this.curve.getPointAt(t),
+        progress: t,
+      });
+    }
+
     this.initAIDrivers(aiCount);
     this.resetToGrid(4); // Player starts in P5 (grid slot 4)
   }
 
   public initAIDrivers(count: number) {
     this.aiDrivers = DEFAULT_AI_DRIVERS.slice(0, count).map((d, index) => {
-      // Grid slots: alternate left and right along main straight behind start line
-      // Slot 0 is P1 (pole), slot 1 is P2, etc. Player is at slot 4 (P5).
       const gridSlot = index >= 4 ? index + 1 : index;
-      const progressOffset = 1.0 - (gridSlot * 16) / this.trackLength;
-      const lateral = (gridSlot % 2 === 0 ? -3.5 : 3.5);
+      const progressOffset = (1.0 - (gridSlot * 14) / this.trackLength + 1) % 1;
+      const lateral = gridSlot % 2 === 0 ? -2.6 : 2.6;
 
       return {
         ...d,
@@ -130,13 +141,13 @@ export class RacingPhysicsEngine {
   }
 
   public resetToGrid(gridSlot: number = 4) {
-    // Player grid position
-    this.trackProgress = (1.0 - (gridSlot * 16) / this.trackLength + 1) % 1;
+    // Player grid slot (4 = P5)
+    this.trackProgress = (1.0 - (gridSlot * 14) / this.trackLength + 1) % 1;
     const pt = this.curve.getPointAt(this.trackProgress);
     const tan = this.curve.getTangentAt(this.trackProgress).normalize();
     const norm = new THREE.Vector3(-tan.z, 0, tan.x).normalize();
 
-    const lateral = gridSlot % 2 === 0 ? -3.5 : 3.5;
+    const lateral = gridSlot % 2 === 0 ? -2.6 : 2.6;
     this.position.set(pt.x + norm.x * lateral, pt.y + 0.35, pt.z + norm.z * lateral);
     this.forward.copy(tan);
     this.velocity.set(0, 0, 0);
@@ -152,11 +163,12 @@ export class RacingPhysicsEngine {
   }
 
   public recoverToTrackCenter() {
+    this.updateTrackProgress(true); // Force full global search to find exact nearest point
     const pt = this.curve.getPointAt(this.trackProgress);
     const tan = this.curve.getTangentAt(this.trackProgress).normalize();
     this.position.set(pt.x, pt.y + 0.35, pt.z);
     this.forward.copy(tan);
-    this.speedKmh = Math.max(35, this.speedKmh);
+    this.speedKmh = Math.max(45, this.speedKmh);
     this.steeringAngle = 0;
     this.lateralSlip = 0;
   }
@@ -171,7 +183,6 @@ export class RacingPhysicsEngine {
     inputs: { throttle: number; brake: number; steer: number; drs: boolean; handbrake: boolean },
     isRacing: boolean
   ) {
-    // Clamp delta to avoid huge physics steps on lag spikes
     const dt = Math.min(delta, 0.05);
 
     if (isRacing && this.lapStartTime > 0) {
@@ -191,23 +202,21 @@ export class RacingPhysicsEngine {
     const carOffsetVec = new THREE.Vector3().subVectors(this.position, trackPoint);
     const lateralDist = carOffsetVec.dot(trackNorm);
 
-    // Track surface flags (Track is 14m wide = ±7m, Curbs are ±7 to ±8.6m)
+    // Track surface flags (Track width is 14m: ±7m from center. Shoulder/Curbs ±7 to ±8.8m)
     const absLat = Math.abs(lateralDist);
-    this.onCurb = absLat >= 6.8 && absLat <= 8.8;
-    this.onGrass = absLat > 8.8;
+    this.onCurb = absLat >= 6.4 && absLat <= 8.2;
+    this.onGrass = absLat > 8.2;
 
-    // Surface modifiers
     let accelerationModifier = 1.0;
     let maxSpeedLimit = maxSpeed;
     if (this.onGrass) {
-      accelerationModifier = 0.45;
-      maxSpeedLimit = Math.min(maxSpeed, 95); // Dragged heavily by gravel/grass
+      accelerationModifier = 0.55;
+      maxSpeedLimit = Math.min(maxSpeed, 110);
     } else if (this.onCurb) {
-      accelerationModifier = 0.92;
+      accelerationModifier = 0.94;
     }
 
     if (!isRacing) {
-      // Countdown revving at starting line
       this.speedKmh = 0;
       this.rpm = 1500 + inputs.throttle * (isF1 ? 11500 : 6500);
       return;
@@ -217,64 +226,76 @@ export class RacingPhysicsEngine {
     const speedRatio = Math.max(0, this.speedKmh / maxSpeedLimit);
     let accelForce = 0;
     if (inputs.throttle > 0 && this.speedKmh < maxSpeedLimit) {
-      // High initial torque, tapering off with aerodynamic drag
-      const torqueCurve = Math.pow(1 - speedRatio, 0.7);
-      const powerMultiplier = isF1 ? 75 : 55;
+      const torqueCurve = Math.pow(1 - speedRatio * 0.92, 0.65);
+      const powerMultiplier = isF1 ? 72 : 54;
       accelForce = inputs.throttle * powerMultiplier * torqueCurve * accelerationModifier;
     }
 
     // Braking Force
     let brakeForce = 0;
     if (inputs.brake > 0) {
-      const brakePower = isF1 ? 95 : 78;
+      const brakePower = isF1 ? 92 : 76;
       brakeForce = inputs.brake * brakePower;
     }
 
-    // Natural drag & rolling resistance
-    const aeroDrag = Math.pow(this.speedKmh / 100, 2) * (this.drsActive ? 0.9 : 1.4);
-    const rollingResistance = 1.2;
+    // Aero Drag & Rolling Resistance
+    const aeroDrag = Math.pow(this.speedKmh / 100, 2) * (this.drsActive ? 0.9 : 1.35);
+    const rollingResistance = 1.1;
 
-    // Net acceleration in km/h/s
     const netAccel = accelForce - brakeForce - aeroDrag - rollingResistance;
     this.speedKmh = Math.max(0, this.speedKmh + netAccel * dt * 3.6);
 
-    // Steering & Angular velocity
-    // Downforce increases high-speed grip on F1 cars, while GT3 has higher mechanical low-speed slip
-    const downforceFactor = isF1 ? Math.min(1.4, 0.9 + Math.pow(this.speedKmh / 220, 2)) : 1.0;
-    const steerSensitivity = (isF1 ? 2.4 : 1.9) * (1 / (1 + this.speedKmh * 0.003)) * downforceFactor;
-    this.steeringAngle = THREE.MathUtils.lerp(this.steeringAngle, inputs.steer * steerSensitivity, 0.25);
+    // --- REFINED SPEED-SENSITIVE SMOOTH STEERING ---
+    // At low speeds (e.g. 0-50 km/h for Turn 1, Turn 2, Turn 9, Turn 15):
+    // Max steer angle allows agile hairpin negotiation (~0.24 rad / 13.8°).
+    // At high speeds (200-340 km/h on straights/esses):
+    // Smoothly tightens to ~0.045 rad (2.5°) for rock-solid high-speed tracking without twitch.
+    const speedKmh = Math.max(1, this.speedKmh);
+    const speedMs = speedKmh / 3.6;
 
-    // Lateral grip and drift calculation with smooth low-speed to high-speed kinematics
-    const speedMs = this.speedKmh / 3.6;
-    const effectiveTurnSpeed = Math.max(8, Math.min(65, speedMs));
-    const turnRate = (this.steeringAngle * (effectiveTurnSpeed / 3.2)) * dt;
-    this.forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), turnRate).normalize();
+    const highSpeedScale = 1.0 / (1.0 + Math.pow(speedKmh / 85, 1.4));
+    const maxSteerAngle = isF1
+      ? 0.04 + highSpeedScale * 0.20
+      : 0.05 + highSpeedScale * 0.22;
 
-    const corneringForce = Math.abs(inputs.steer) * Math.pow(this.speedKmh / 100, 2);
-    const gripThreshold = isF1 ? 4.2 : 2.8;
-    if (corneringForce > gripThreshold) {
-      this.lateralSlip = Math.min(1.0, (corneringForce - gripThreshold) / 2.5);
-      // Scrub speed when sliding
-      this.speedKmh -= this.lateralSlip * 18 * dt;
+    const targetSteerAngle = inputs.steer * maxSteerAngle;
+    // Controlled damping rate: 5.5 when steering into turn, 8.0 when releasing (crisp return to center)
+    const dampRate = Math.abs(inputs.steer) > 0.05 ? 5.5 : 8.0;
+    this.steeringAngle = THREE.MathUtils.damp(this.steeringAngle, targetSteerAngle, dampRate, dt);
+
+    // Kinematic Yaw Rate: omega = (v * tan(delta)) / L
+    const wheelbase = 3.4;
+    let rawYawRate = (speedMs * Math.tan(this.steeringAngle)) / wheelbase;
+
+    // Lateral G-Force clamp (tires limit lateral acceleration gracefully)
+    const maxG = isF1 ? 4.2 : 2.5;
+    const maxLatAccel = maxG * 9.81;
+    const currentLatAccel = Math.abs(speedMs * rawYawRate);
+
+    if (currentLatAccel > maxLatAccel && speedMs > 6) {
+      rawYawRate = Math.sign(rawYawRate) * (maxLatAccel / speedMs);
+      this.lateralSlip = Math.min(1.0, (currentLatAccel - maxLatAccel) / 12);
+      this.speedKmh -= this.lateralSlip * 14 * dt;
     } else {
       this.lateralSlip = THREE.MathUtils.lerp(this.lateralSlip, 0, 0.15);
     }
 
-    // Move car position
-    const movement = this.forward.clone().multiplyScalar(speedMs * dt);
+    const yawDelta = rawYawRate * dt;
+    this.forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), yawDelta).normalize();
 
     // Handbrake slide
     if (inputs.handbrake) {
-      this.speedKmh = Math.max(0, this.speedKmh - 65 * dt);
-      this.lateralSlip = 0.9;
+      this.speedKmh = Math.max(0, this.speedKmh - 60 * dt);
+      this.lateralSlip = 0.85;
     }
 
+    // Move car position along forward vector
+    const movement = this.forward.clone().multiplyScalar(speedMs * dt);
     this.position.add(movement);
 
-    // Calculate nearest track progress (projecting position along spline)
-    this.updateTrackProgress();
+    // --- BULLETPROOF TRACK PROGRESS & COLLISION BOUNDARIES ---
+    this.updateTrackProgress(false);
 
-    // --- RIGID TRACK BOUNDARIES & BARRIER COLLISION PROTECTION ---
     const currTrackPt = this.curve.getPointAt(this.trackProgress);
     const currTrackTan = this.curve.getTangentAt(this.trackProgress).normalize();
     const currTrackNorm = new THREE.Vector3(-currTrackTan.z, 0, currTrackTan.x).normalize();
@@ -283,73 +304,61 @@ export class RacingPhysicsEngine {
     const currentLatDist = carOffset.dot(currTrackNorm);
     const absLatDist = Math.abs(currentLatDist);
 
-    // Barriers are at ±13m. Clamp strictly at 12.6m so the car can NEVER drive off the circuit
-    const MAX_BARRIER_DISTANCE = 12.6;
+    // Solid Armco barrier is at ±9.6m. HARD CLAMP at 8.9m to ensure car CAN NEVER EXIT CIRCUIT!
+    const MAX_BARRIER_DISTANCE = 8.9;
 
     if (absLatDist > MAX_BARRIER_DISTANCE) {
       const barrierSide = Math.sign(currentLatDist);
-      const clampedLat = barrierSide * (MAX_BARRIER_DISTANCE - 0.2);
+      const clampedLat = barrierSide * (MAX_BARRIER_DISTANCE - 0.15);
 
-      // Clamp position safely inside track
+      // Instantly clamp position safely inside track barrier
       this.position.x = currTrackPt.x + currTrackNorm.x * clampedLat;
       this.position.z = currTrackPt.z + currTrackNorm.z * clampedLat;
 
-      // Deflect forward heading along track tangent (prevent pushing through barrier)
-      this.forward.lerp(currTrackTan, 0.5).normalize();
+      // Deflect forward heading along track tangent (prevent nose pushing through barrier)
+      this.forward.lerp(currTrackTan, 0.55).normalize();
 
-      // Scrub impact speed
-      if (this.speedKmh > 30) {
+      if (this.speedKmh > 25) {
         audioEngine.playBarrierThump();
       }
-      this.speedKmh = Math.max(0, this.speedKmh * 0.65);
-      this.lateralSlip = 0.85;
+      this.speedKmh = Math.max(0, this.speedKmh * 0.72);
+      this.lateralSlip = 0.7;
     }
 
-    // Safety emergency recovery if car is somehow dislodged > 18 meters
-    if (absLatDist > 18.0) {
-      this.position.copy(currTrackPt).add(new THREE.Vector3(0, 0.35, 0));
-      this.forward.copy(currTrackTan);
-      this.speedKmh = 35;
+    // Emergency failsafe: If position ever exceeds 13m from track, auto-recover to track center
+    if (absLatDist > 13.0 || this.position.y < -0.8) {
+      this.recoverToTrackCenter();
+    } else {
+      // Smooth vertical elevation following track surface
+      this.position.y = THREE.MathUtils.lerp(this.position.y, currTrackPt.y + 0.35, 0.3);
     }
-
-    // Altitude tracking (match elevation of the track spline)
-    const currentElevation = currTrackPt.y;
-    this.position.y = THREE.MathUtils.lerp(this.position.y, currentElevation + 0.35, 0.25);
 
     // Gear & RPM simulation
     this.updateGearsAndRpm(inputs.throttle);
 
-    // DRS Zone Checking (Available in Sector 1 main straight & Sector 3 back straight)
+    // DRS Zone Checking
     this.checkDrsAvailability(inputs.drs);
 
     // Update AI competitors
     this.updateAIDrivers(dt);
 
-    // Check slipstream drafting behind leading cars
+    // Check slipstream drafting
     this.checkSlipstream();
   }
 
-  private updateTrackProgress() {
-    // Project position forward along curve
+  /**
+   * Robust track projection: searches local window, but falls back to full global scan
+   * if car is pushed or skids far, guaranteeing it NEVER gets lost.
+   */
+  private updateTrackProgress(forceGlobal: boolean = false) {
     const currentT = this.trackProgress;
     let bestT = currentT;
     let minDistSq = Infinity;
 
-    // Search localized neighborhood (-0.02 to +0.04 of progress)
-    for (let i = -20; i <= 35; i++) {
-      const testT = (currentT + (i / 1000) + 1) % 1;
-      const pt = this.curve.getPointAt(testT);
-      const distSq = pt.distanceToSquared(this.position);
-      if (distSq < minDistSq) {
-        minDistSq = distSq;
-        bestT = testT;
-      }
-    }
-
-    // Failsafe: If somehow desynced (>30m from track), global search to find true closest track point
-    if (minDistSq > 900) {
-      for (let s = 0; s < 100; s++) {
-        const testT = s / 100;
+    if (!forceGlobal) {
+      // Local search: 60 samples (-0.03 to +0.03)
+      for (let i = -30; i <= 35; i++) {
+        const testT = (currentT + (i / 1000) + 1) % 1;
         const pt = this.curve.getPointAt(testT);
         const distSq = pt.distanceToSquared(this.position);
         if (distSq < minDistSq) {
@@ -359,199 +368,219 @@ export class RacingPhysicsEngine {
       }
     }
 
-    // Detect lap completion crossing start/finish line (t: 0.88 -> 0.12)
-    if (this.trackProgress > 0.88 && bestT < 0.12) {
-      this.onLapCompleted();
+    // If local search found a point within 12 meters, accept it
+    if (!forceGlobal && minDistSq < 144) {
+      this.handleLapProgressTransition(bestT);
+      return;
     }
 
-    this.trackProgress = bestT;
+    // Fallback: Global search across all 500 cached reference points
+    let globalBestT = 0;
+    let globalMinDistSq = Infinity;
+    for (let k = 0; k < this.samplePoints.length; k++) {
+      const distSq = this.samplePoints[k].position.distanceToSquared(this.position);
+      if (distSq < globalMinDistSq) {
+        globalMinDistSq = distSq;
+        globalBestT = this.samplePoints[k].progress;
+      }
+    }
 
-    // Sector timing detection
-    if (this.trackProgress < 0.32) {
+    // Fine-tune around global winner
+    for (let j = -10; j <= 10; j++) {
+      const fineT = (globalBestT + j * 0.001 + 1) % 1;
+      const pt = this.curve.getPointAt(fineT);
+      const distSq = pt.distanceToSquared(this.position);
+      if (distSq < globalMinDistSq) {
+        globalMinDistSq = distSq;
+        globalBestT = fineT;
+      }
+    }
+
+    this.handleLapProgressTransition(globalBestT);
+  }
+
+  private handleLapProgressTransition(newT: number) {
+    const oldT = this.trackProgress;
+
+    // Detect lap completion (crossing start/finish line from ~0.95 to ~0.05)
+    if (oldT > 0.88 && newT < 0.12) {
+      this.currentLap += 1;
+      if (this.lapStartTime > 0) {
+        const now = performance.now();
+        this.lastLapTime = (now - this.lapStartTime) / 1000;
+        if (this.bestLapTime === 0 || this.lastLapTime < this.bestLapTime) {
+          this.bestLapTime = this.lastLapTime;
+        }
+        this.lapStartTime = now;
+        this.sectorStartTimes.s1 = now;
+      }
+    }
+
+    this.trackProgress = newT;
+
+    // Sector timing update
+    // S1: 0.0 to 0.43 (Start to Turn 5 exit)
+    // S2: 0.43 to 0.78 (Turn 6 to Turn 11 exit)
+    // S3: 0.78 to 1.0 (Turn 12 through Turn 15 to Finish line)
+    const now = performance.now();
+    if (newT < 0.43) {
       this.currentSector = 1;
-    } else if (this.trackProgress < 0.68) {
-      if (this.currentSector === 1) {
-        this.sectorTimes.s1 = (performance.now() - this.sectorStartTimes.s1) / 1000;
-        this.sectorStartTimes.s2 = performance.now();
+    } else if (newT >= 0.43 && newT < 0.78) {
+      if (this.currentSector === 1 && this.sectorStartTimes.s1 > 0) {
+        this.sectorTimes.s1 = (now - this.sectorStartTimes.s1) / 1000;
+        this.sectorStartTimes.s2 = now;
       }
       this.currentSector = 2;
     } else {
-      if (this.currentSector === 2) {
-        this.sectorTimes.s2 = (performance.now() - this.sectorStartTimes.s2) / 1000;
-        this.sectorStartTimes.s3 = performance.now();
+      if (this.currentSector === 2 && this.sectorStartTimes.s2 > 0) {
+        this.sectorTimes.s2 = (now - this.sectorStartTimes.s2) / 1000;
+        this.sectorStartTimes.s3 = now;
       }
       this.currentSector = 3;
     }
   }
 
-  private onLapCompleted() {
-    this.lastLapTime = this.currentLapTime;
-    this.sectorTimes.s3 = (performance.now() - this.sectorStartTimes.s3) / 1000;
-
-    if (this.bestLapTime === 0 || this.lastLapTime < this.bestLapTime) {
-      this.bestLapTime = this.lastLapTime;
-    }
-
-    this.currentLap++;
-    this.lapStartTime = performance.now();
-    this.sectorStartTimes.s1 = this.lapStartTime;
-    this.sectorStartTimes.s2 = 0;
-    this.sectorStartTimes.s3 = 0;
-  }
-
   private updateGearsAndRpm(throttle: number) {
     const isF1 = this.vehicleClass === 'f1';
-    const gearRatios = isF1
-      ? [0, 85, 135, 185, 230, 275, 315, 345] // 8-speed F1 gearbox
-      : [0, 75, 115, 160, 210, 255, 295]; // 6-speed GT3 gearbox
-
     const maxRpm = isF1 ? 14500 : 8500;
-    const idleRpm = isF1 ? 3800 : 1800;
+    const idleRpm = isF1 ? 2500 : 1200;
 
-    // Auto gear selection
-    let chosenGear = 1;
-    for (let g = 1; g < gearRatios.length; g++) {
-      if (this.speedKmh > gearRatios[g] * 0.92) {
-        chosenGear = g + 1;
-      }
-    }
-    this.gear = Math.min(gearRatios.length - 1, chosenGear);
+    // Gear speed ratios
+    const gearRatios = isF1
+      ? [0, 85, 130, 175, 220, 265, 305, 345] // 1..7 gears
+      : [0, 75, 120, 165, 215, 260, 295]; // 1..6 gears
 
-    // Compute RPM within current gear band
-    const prevGearSpeed = this.gear === 1 ? 0 : gearRatios[this.gear - 1] * 0.8;
-    const currGearMaxSpeed = gearRatios[this.gear];
-    const gearProgress = Math.max(0, Math.min(1, (this.speedKmh - prevGearSpeed) / (currGearMaxSpeed - prevGearSpeed)));
+    const maxGears = gearRatios.length - 1;
 
-    const targetRpm = idleRpm + gearProgress * (maxRpm - idleRpm) + throttle * 600;
-    this.rpm = THREE.MathUtils.lerp(this.rpm, Math.min(maxRpm, targetRpm), 0.2);
-  }
-
-  private checkDrsAvailability(requestedDrs: boolean) {
-    // Sepang DRS Zones:
-    // Zone 1: Main Straight (progress 0.94 to 0.99)
-    // Zone 2: Back Straight (progress 0.76 to 0.88)
-    const inDrsZone =
-      (this.trackProgress >= 0.94 && this.trackProgress <= 0.995) ||
-      (this.trackProgress >= 0.76 && this.trackProgress <= 0.885);
-
-    this.drsAvailable = inDrsZone && this.speedKmh > 120;
-    this.drsActive = this.drsAvailable && requestedDrs;
-  }
-
-  private checkSlipstream() {
-    this.slipstreamActive = false;
-    if (this.speedKmh < 180) return;
-
-    // Find if an AI car is within 25 meters ahead of player
-    for (const ai of this.aiDrivers) {
-      if (ai.lap === this.currentLap) {
-        const progressDiff = (ai.trackProgress - this.trackProgress + 1) % 1;
-        const distMeters = progressDiff * this.trackLength;
-        if (distMeters > 4 && distMeters < 32 && Math.abs(ai.lateralOffset) < 3.5) {
-          this.slipstreamActive = true;
+    // Auto-shifting logic
+    if (this.speedKmh < 5) {
+      this.gear = 1;
+    } else {
+      for (let g = 1; g <= maxGears; g++) {
+        if (this.speedKmh <= gearRatios[g] || g === maxGears) {
+          this.gear = g;
           break;
         }
       }
     }
+
+    // RPM based on speed within current gear
+    const prevGearSpeed = this.gear === 1 ? 0 : gearRatios[this.gear - 1];
+    const nextGearSpeed = gearRatios[this.gear];
+    const gearSpan = Math.max(1, nextGearSpeed - prevGearSpeed);
+    const gearProgress = Math.min(1.0, Math.max(0, (this.speedKmh - prevGearSpeed) / gearSpan));
+
+    const targetRpm = idleRpm + gearProgress * (maxRpm - idleRpm) + (throttle > 0 ? 300 : -200);
+    this.rpm = THREE.MathUtils.lerp(this.rpm, Math.min(maxRpm, Math.max(idleRpm, targetRpm)), 0.25);
+  }
+
+  private checkDrsAvailability(userDrsInput: boolean) {
+    // DRS is active on Main Straight (t: 0.90 to 0.08) and Back Straight (t: 0.79 to 0.88)
+    const inDrsZone =
+      (this.trackProgress >= 0.90 || this.trackProgress <= 0.08) ||
+      (this.trackProgress >= 0.79 && this.trackProgress <= 0.88);
+
+    this.drsAvailable = inDrsZone && this.speedKmh > 120;
+    this.drsActive = this.drsAvailable && userDrsInput;
   }
 
   private updateAIDrivers(dt: number) {
-    this.aiDrivers.forEach((ai, idx) => {
-      // Find recommended speed on circuit at AI's current progress
-      const waypoint = this.getNearestWaypoint(ai.trackProgress);
-      const targetSpeed = (waypoint.recommendedSpeed * ai.skillLevel) + (ai.aggression * 15);
+    this.aiDrivers.forEach((ai) => {
+      // Find current waypoint recommendation for AI speed & braking
+      const approxIdx = Math.floor(ai.trackProgress * SEPANG_CONTROL_POINTS.length);
+      const wp = SEPANG_CONTROL_POINTS[approxIdx % SEPANG_CONTROL_POINTS.length];
+      const targetSpeed = (wp.recommendedSpeed || 250) * ai.skillLevel;
 
-      // Smooth acceleration & braking toward target speed
+      // Accelerate / Brake toward corner target speed
       if (ai.speed < targetSpeed) {
-        ai.speed += 28 * dt * ai.skillLevel;
+        ai.speed = Math.min(targetSpeed, ai.speed + 42 * dt * 3.6);
       } else {
-        ai.speed -= 42 * dt;
+        ai.speed = Math.max(targetSpeed, ai.speed - 75 * dt * 3.6);
       }
 
-      // Progress along circuit spline
+      // Progress along spline
       const speedMs = ai.speed / 3.6;
       const progressDelta = (speedMs * dt) / this.trackLength;
-      const prevProgress = ai.trackProgress;
       ai.trackProgress = (ai.trackProgress + progressDelta) % 1;
 
-      // Check lap count for AI
-      if (prevProgress > 0.9 && ai.trackProgress < 0.1) {
-        ai.lap++;
+      // Dynamic racing line: dive toward inside curb on corners
+      if (wp.curbSide === 'left') {
+        ai.lateralOffset = THREE.MathUtils.lerp(ai.lateralOffset, -2.4, 0.05);
+      } else if (wp.curbSide === 'right') {
+        ai.lateralOffset = THREE.MathUtils.lerp(ai.lateralOffset, 2.4, 0.05);
+      } else {
+        // Center of track
+        ai.lateralOffset = THREE.MathUtils.lerp(ai.lateralOffset, 0, 0.03);
       }
-
-      // Dynamic racing line & overtaking lane oscillation
-      const laneOscillation = Math.sin(performance.now() * 0.001 + idx) * 1.5;
-      ai.lateralOffset = THREE.MathUtils.lerp(ai.lateralOffset, (idx % 2 === 0 ? -1.8 : 1.8) + laneOscillation, 0.05);
     });
 
-    // Compute live positions (1 to 8) based on total distance traveled
+    // Update Live Leaderboard Positions
     const allRacers = [
-      { id: 'player', totalDist: (this.currentLap - 1) * this.trackLength + this.trackProgress * this.trackLength },
-      ...this.aiDrivers.map(ai => ({
-        id: ai.id,
-        totalDist: (ai.lap - 1) * this.trackLength + ai.trackProgress * this.trackLength,
-      })),
-    ].sort((a, b) => b.totalDist - a.totalDist);
+      { id: 'player', progress: this.trackProgress + (this.currentLap - 1), speed: this.speedKmh },
+      ...this.aiDrivers.map((a) => ({ id: a.id, progress: a.trackProgress + (a.lap - 1), speed: a.speed })),
+    ];
 
-    // Update positions
-    allRacers.forEach((racer, rank) => {
-      if (racer.id === 'player') {
-        // Player rank
-      } else {
-        const ai = this.aiDrivers.find(d => d.id === racer.id);
-        if (ai) {
-          ai.position = rank + 1;
-          const leaderDist = allRacers[0].totalDist;
-          const gapMeters = Math.max(0, leaderDist - racer.totalDist);
-          ai.gapToLeader = rank === 0 ? 'LEADER' : `+${(gapMeters / 70).toFixed(1)}s`;
+    allRacers.sort((a, b) => b.progress - a.progress);
+
+    this.aiDrivers.forEach((ai) => {
+      ai.position = allRacers.findIndex((r) => r.id === ai.id) + 1;
+    });
+  }
+
+  private checkSlipstream() {
+    let drafting = false;
+    for (const ai of this.aiDrivers) {
+      const progressDiff = (ai.trackProgress - this.trackProgress + 1) % 1;
+      const distanceAheadMeters = progressDiff * this.trackLength;
+
+      // If trailing 8 to 45 meters behind an opponent with similar lateral position
+      if (distanceAheadMeters > 8 && distanceAheadMeters < 45) {
+        const lateralDiff = Math.abs(ai.lateralOffset - 0);
+        if (lateralDiff < 3.2 && this.speedKmh > 180) {
+          drafting = true;
+          break;
         }
       }
-    });
-  }
-
-  public getPlayerPosition(): number {
-    const playerTotal = (this.currentLap - 1) * this.trackLength + this.trackProgress * this.trackLength;
-    let rank = 1;
-    for (const ai of this.aiDrivers) {
-      const aiTotal = (ai.lap - 1) * this.trackLength + ai.trackProgress * this.trackLength;
-      if (aiTotal > playerTotal) {
-        rank++;
-      }
     }
-    return rank;
-  }
-
-  private getNearestWaypoint(progress: number): CircuitWaypoint {
-    const index = Math.floor(progress * SEPANG_CONTROL_POINTS.length) % SEPANG_CONTROL_POINTS.length;
-    return SEPANG_CONTROL_POINTS[index];
+    this.slipstreamActive = drafting;
   }
 
   public getTelemetry(): TelemetryData {
+    // Determine player position among all 8 racers
+    const allRacers = [
+      { id: 'player', progress: this.trackProgress + (this.currentLap - 1) },
+      ...this.aiDrivers.map((a) => ({ id: a.id, progress: a.trackProgress + (a.lap - 1) })),
+    ];
+    allRacers.sort((a, b) => b.progress - a.progress);
+    const playerPos = allRacers.findIndex((r) => r.id === 'player') + 1;
+    const isF1 = this.vehicleClass === 'f1';
+
     return {
       speed: Math.round(this.speedKmh),
       rpm: Math.round(this.rpm),
-      maxRpm: this.vehicleClass === 'f1' ? 14500 : 8500,
+      maxRpm: isF1 ? 14500 : 8500,
       gear: this.gear,
-      throttle: this.speedKmh > 0 ? 0.9 : 0,
-      brake: 0,
-      steering: this.steeringAngle,
-      slipstreamActive: this.slipstreamActive,
+      lap: this.currentLap,
+      currentLap: this.currentLap,
+      totalLaps: this.totalLaps,
+      lapTime: this.currentLapTime,
+      currentLapTime: this.currentLapTime,
+      bestLapTime: this.bestLapTime,
+      lastLapTime: this.lastLapTime,
+      currentSector: this.currentSector,
+      sectorTimes: this.sectorTimes,
+      position: playerPos,
+      totalDrivers: this.aiDrivers.length + 1,
+      totalRacers: this.aiDrivers.length + 1,
+      gapToLeader: playerPos === 1 ? 'LEADER' : `+${((playerPos - 1) * 1.4).toFixed(1)}s`,
       drsAvailable: this.drsAvailable,
       drsActive: this.drsActive,
       onCurb: this.onCurb,
       onGrass: this.onGrass,
-      gForceLat: (this.lateralSlip * 3.5),
-      gForceLong: 0,
-      currentLap: Math.min(this.totalLaps, this.currentLap),
-      totalLaps: this.totalLaps,
-      currentLapTime: this.currentLapTime,
-      bestLapTime: this.bestLapTime,
-      lastLapTime: this.lastLapTime,
-      sectorTimes: this.sectorTimes,
-      currentSector: this.currentSector,
+      gForceLat: Math.abs(this.steeringAngle * this.speedKmh * 0.02),
       deltaToBest: this.bestLapTime > 0 ? this.currentLapTime - this.bestLapTime : 0,
-      position: this.getPlayerPosition(),
-      totalDrivers: this.aiDrivers.length + 1,
+      slipstreamActive: this.slipstreamActive,
+      trackProgress: this.trackProgress,
     };
   }
 }
