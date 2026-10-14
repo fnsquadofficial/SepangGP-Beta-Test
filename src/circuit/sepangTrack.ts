@@ -263,7 +263,10 @@ export function createSepangCircuit(weather: 'day' | 'sunset' | 'wet' = 'day'): 
   // F. Floodlight Pylons for night/sunset racing
   addFloodlightTowers(decorationsGroup);
 
-  // G. Ground terrain / Run-off grass & gravel
+  // G. Continuous FIA Armco Crash Barriers & Safety Walls
+  addCircuitSafetyBarriers(decorationsGroup, curve);
+
+  // H. Ground terrain / Run-off grass & gravel
   const terrainGeo = new THREE.PlaneGeometry(1600, 1600, 32, 32);
   const terrainMat = new THREE.MeshStandardMaterial({
     color: weather === 'wet' ? 0x1b3820 : 0x27592d,
@@ -566,3 +569,87 @@ function addFloodlightTowers(group: THREE.Group) {
     group.add(pylon);
   });
 }
+
+/**
+ * Continuous FIA Armco Metal Crash Barriers & Tire Walls along Track Perimeter
+ */
+function addCircuitSafetyBarriers(group: THREE.Group, curve: THREE.CatmullRomCurve3) {
+  const barrierSegments = 260;
+  const BARRIER_OFFSET = 13.0; // Distance from track centerline in meters
+
+  const armcoMat = new THREE.MeshStandardMaterial({
+    color: 0x94a3b8,
+    metalness: 0.85,
+    roughness: 0.25,
+  });
+
+  const postMat = new THREE.MeshStandardMaterial({
+    color: 0x475569,
+    metalness: 0.9,
+    roughness: 0.3,
+  });
+
+  const tireMatRed = new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.8 });
+  const tireMatWhite = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.8 });
+
+  for (let i = 0; i < barrierSegments; i++) {
+    const t0 = i / barrierSegments;
+    const t1 = ((i + 1) % barrierSegments) / barrierSegments;
+
+    const p0 = curve.getPointAt(t0);
+    const p1 = curve.getPointAt(t1);
+
+    const tan0 = curve.getTangentAt(t0).normalize();
+    const tan1 = curve.getTangentAt(t1).normalize();
+
+    const norm0 = new THREE.Vector3(-tan0.z, 0, tan0.x).normalize();
+    const norm1 = new THREE.Vector3(-tan1.z, 0, tan1.x).normalize();
+
+    // Both left (+1) and right (-1) sides
+    [-1, 1].forEach((sign) => {
+      const pos0 = new THREE.Vector3(
+        p0.x + norm0.x * BARRIER_OFFSET * sign,
+        p0.y + 0.6,
+        p0.z + norm0.z * BARRIER_OFFSET * sign
+      );
+      const pos1 = new THREE.Vector3(
+        p1.x + norm1.x * BARRIER_OFFSET * sign,
+        p1.y + 0.6,
+        p1.z + norm1.z * BARRIER_OFFSET * sign
+      );
+
+      const segmentLen = pos0.distanceTo(pos1);
+      const midPoint = new THREE.Vector3().addVectors(pos0, pos1).multiplyScalar(0.5);
+      const dir = new THREE.Vector3().subVectors(pos1, pos0).normalize();
+
+      // Armco Double Rail Guardrail
+      const railGeo = new THREE.BoxGeometry(0.18, 0.75, segmentLen + 0.1);
+      const railMesh = new THREE.Mesh(railGeo, armcoMat);
+      railMesh.position.copy(midPoint);
+      railMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+      railMesh.castShadow = true;
+      railMesh.receiveShadow = true;
+      group.add(railMesh);
+
+      // Support Post
+      const postGeo = new THREE.BoxGeometry(0.2, 1.2, 0.2);
+      const postMesh = new THREE.Mesh(postGeo, postMat);
+      postMesh.position.set(pos0.x, pos0.y - 0.1, pos0.z);
+      group.add(postMesh);
+
+      // Safety Tire stacks every 8th segment
+      if (i % 8 === 0) {
+        const tireGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.75, 12);
+        tireGeo.rotateZ(Math.PI / 2);
+        const tireMesh = new THREE.Mesh(tireGeo, i % 16 === 0 ? tireMatRed : tireMatWhite);
+        tireMesh.position.set(
+          pos0.x - norm0.x * 0.5 * sign,
+          pos0.y - 0.2,
+          pos0.z - norm0.z * 0.5 * sign
+        );
+        group.add(tireMesh);
+      }
+    });
+  }
+}
+

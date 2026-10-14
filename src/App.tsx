@@ -15,6 +15,7 @@ export default function App() {
   const [countdownStep, setCountdownStep] = useState<number>(0);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
+  const [resetTrigger, setResetTrigger] = useState<number>(0);
 
   // Keyboard input state
   const [inputState, setInputState] = useState({
@@ -77,6 +78,11 @@ export default function App() {
       if (e.code === 'KeyM') {
         const muted = audioEngine.toggleMute();
         setIsMuted(muted);
+      }
+
+      // Quick track recover shortcut
+      if (e.code === 'KeyR') {
+        handleResetCar();
       }
 
       updateInputs();
@@ -171,7 +177,7 @@ export default function App() {
   }, []);
 
   const handleResetCar = useCallback(() => {
-    // Reset inputs
+    // Reset inputs & recover vehicle to track center
     setInputState({
       throttle: 0,
       brake: 0,
@@ -179,6 +185,7 @@ export default function App() {
       drs: false,
       handbrake: false,
     });
+    setResetTrigger((prev) => prev + 1);
   }, []);
 
   // Touch control handlers
@@ -227,6 +234,7 @@ export default function App() {
             onLapCompleted={handleLapCompleted}
             onRaceFinished={handleRaceFinished}
             inputState={inputState}
+            resetTrigger={resetTrigger}
           />
 
           <BroadcastHUD

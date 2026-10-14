@@ -24,6 +24,7 @@ interface RaceCanvasProps {
     drs: boolean;
     handbrake: boolean;
   };
+  resetTrigger?: number;
 }
 
 export const RaceCanvas: React.FC<RaceCanvasProps> = ({
@@ -37,6 +38,7 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
   onLapCompleted,
   onRaceFinished,
   inputState,
+  resetTrigger,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -55,6 +57,9 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
   const tempVec = useRef(new THREE.Vector3());
   const camTargetPos = useRef(new THREE.Vector3());
   const camLookAtPos = useRef(new THREE.Vector3());
+  const smoothedCamPos = useRef(new THREE.Vector3());
+  const smoothedLookAt = useRef(new THREE.Vector3());
+  const isCamInitialized = useRef(false);
 
   // Tire smoke & rain spray particle systems
   const smokeParticlesRef = useRef<{ mesh: THREE.Mesh; life: number; maxLife: number; vel: THREE.Vector3 }[]>([]);
@@ -100,6 +105,14 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       });
     }
   }, [countdownStep]);
+
+  // Handle player vehicle recovery to track centerline
+  useEffect(() => {
+    if (resetTrigger && resetTrigger > 0 && engineRef.current) {
+      engineRef.current.recoverToTrackCenter();
+      isCamInitialized.current = false;
+    }
+  }, [resetTrigger]);
 
   // Main Scene Setup
   useEffect(() => {
@@ -272,16 +285,15 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
       // Sync 3D player car position and orientation
       playerCar.root.position.copy(engine.position);
 
-      // Smooth vehicle body tilt and yaw
+      // Smooth vehicle body tilt and bank with proper quaternion multiplication
       const targetQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, -1), engine.forward);
+      const rollAmount = -engine.steeringAngle * Math.min(1.0, engine.speedKmh / 220) * 0.08;
+      const rollQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), rollAmount);
+      targetQuat.multiply(rollQuat);
       playerCar.root.quaternion.slerp(targetQuat, 0.35);
 
-      // Add roll bank into corners
-      const rollAmount = engine.steeringAngle * (engine.speedKmh / 350) * 0.12;
-      playerCar.root.rotateZ(rollAmount);
-
-      // Steer wheels & spin tires
-      playerCar.setSteering(-engine.steeringAngle * 0.45);
+      // Steer wheels into turn & spin tires
+      playerCar.setSteering(engine.steeringAngle * 0.45);
       const distanceDelta = (engine.speedKmh / 3.6) * delta;
       playerCar.spinWheels(distanceDelta);
       playerCar.setDrsActive(engine.drsActive);
@@ -306,19 +318,19 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
         mesh.spinWheels((ai.speed / 3.6) * delta);
       });
 
-      // Update Camera based on CameraMode
+      // Update Camera with Silky Smooth Damping (Zero turning twitch or glitch)
       if (cameraMode === 'cockpit') {
-        // First-person driver view
-        tempVec.current.set(0, 0.72, -0.15);
-        tempVec.current.applyQuaternion(playerCar.root.quaternion);
-        tempVec.current.add(playerCar.root.position);
-        camera.position.lerp(tempVec.current, 0.8);
+        // Rock-solid cockpit camera anchored to driver's helmet view
+        const eyeOffset = vehicleClass === 'f1' ? new THREE.Vector3(0, 0.72, -0.15) : new THREE.Vector3(-0.35, 0.88, 0.1);
+        const worldEye = eyeOffset.clone().applyQuaternion(playerCar.root.quaternion).add(playerCar.root.position);
+        camera.position.copy(worldEye);
 
-        // Look straight down the track ahead of nosecone
-        camLookAtPos.current.copy(engine.position).add(engine.forward.clone().multiplyScalar(40));
-        camera.lookAt(camLookAtPos.current);
+        const lookTarget = worldEye.clone().add(engine.forward.clone().multiplyScalar(35));
+        lookTarget.y += 0.1;
+        smoothedLookAt.current.lerp(lookTarget, 0.25);
+        camera.lookAt(smoothedLookAt.current);
 
-        camera.fov = 75;
+        camera.fov = 72;
         camera.updateProjectionMatrix();
       } else if (cameraMode === 'helicopter') {
         // High aerial broadcast view
@@ -326,28 +338,36 @@ export const RaceCanvas: React.FC<RaceCanvasProps> = ({
         camera.position.lerp(camTargetPos.current, 0.05);
         camera.lookAt(engine.position);
       } else {
-        // Default 3rd-person chase camera with dynamic FOV & exponential damping
-        const chaseDist = vehicleClass === 'f1' ? 7.2 : 6.8;
-        const chaseHeight = 2.4;
+        // Broadcast Chase Camera: BOTH camera position AND look-at target are smoothly damped
+        const chaseDist = vehicleClass === 'f1' ? 7.4 : 7.0;
+        const chaseHeight = 2.45;
 
         tempVec.current.copy(engine.forward).negate().multiplyScalar(chaseDist);
         tempVec.current.y += chaseHeight;
         camTargetPos.current.copy(engine.position).add(tempVec.current);
 
-        // Add subtle curb shake
-        if (engine.onCurb) {
-          camTargetPos.current.x += (Math.random() - 0.5) * 0.15;
-          camTargetPos.current.y += (Math.random() - 0.5) * 0.15;
+        camLookAtPos.current.copy(engine.position).add(engine.forward.clone().multiplyScalar(18));
+        camLookAtPos.current.y += 0.8;
+
+        if (!isCamInitialized.current) {
+          smoothedCamPos.current.copy(camTargetPos.current);
+          smoothedLookAt.current.copy(camLookAtPos.current);
+          isCamInitialized.current = true;
+        } else {
+          smoothedCamPos.current.lerp(camTargetPos.current, 0.12);
+          smoothedLookAt.current.lerp(camLookAtPos.current, 0.14);
         }
 
-        camera.position.lerp(camTargetPos.current, 0.15);
+        // Subtle curb vibration
+        if (engine.onCurb) {
+          smoothedCamPos.current.x += (Math.random() - 0.5) * 0.08;
+          smoothedCamPos.current.y += (Math.random() - 0.5) * 0.08;
+        }
 
-        // Look ahead of player car
-        camLookAtPos.current.copy(engine.position).add(engine.forward.clone().multiplyScalar(15));
-        camLookAtPos.current.y += 0.8;
-        camera.lookAt(camLookAtPos.current);
+        camera.position.copy(smoothedCamPos.current);
+        camera.lookAt(smoothedLookAt.current);
 
-        // Dynamic FOV widening at speeds > 250 km/h
+        // Dynamic FOV widening at high speed
         const speedFovBonus = Math.max(0, (engine.speedKmh - 180) / 165) * 12;
         camera.fov = THREE.MathUtils.lerp(camera.fov, 65 + speedFovBonus, 0.1);
         camera.updateProjectionMatrix();

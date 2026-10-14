@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { AIDriverProfile, CircuitWaypoint, TelemetryData, VehicleClass, VehicleConfig } from '../types/game';
 import { SEPANG_CONTROL_POINTS } from '../circuit/sepangTrack';
+import { audioEngine } from '../audio/engineAudio';
 
 export const VEHICLE_CONFIGS: Record<VehicleClass, VehicleConfig> = {
   f1: {
@@ -150,6 +151,16 @@ export class RacingPhysicsEngine {
     this.drsAvailable = false;
   }
 
+  public recoverToTrackCenter() {
+    const pt = this.curve.getPointAt(this.trackProgress);
+    const tan = this.curve.getTangentAt(this.trackProgress).normalize();
+    this.position.set(pt.x, pt.y + 0.35, pt.z);
+    this.forward.copy(tan);
+    this.speedKmh = Math.max(35, this.speedKmh);
+    this.steeringAngle = 0;
+    this.lateralSlip = 0;
+  }
+
   public startRaceTimer() {
     this.lapStartTime = performance.now();
     this.sectorStartTimes.s1 = this.lapStartTime;
@@ -229,13 +240,15 @@ export class RacingPhysicsEngine {
 
     // Steering & Angular velocity
     // Downforce increases high-speed grip on F1 cars, while GT3 has higher mechanical low-speed slip
-    const downforceFactor = isF1 ? Math.min(1.6, 0.8 + Math.pow(this.speedKmh / 200, 2)) : 1.0;
-    const steerSensitivity = (isF1 ? 2.8 : 2.2) * (1 / (1 + this.speedKmh * 0.0035)) * downforceFactor;
-    this.steeringAngle = THREE.MathUtils.lerp(this.steeringAngle, inputs.steer * steerSensitivity, 0.2);
+    const downforceFactor = isF1 ? Math.min(1.4, 0.9 + Math.pow(this.speedKmh / 220, 2)) : 1.0;
+    const steerSensitivity = (isF1 ? 2.4 : 1.9) * (1 / (1 + this.speedKmh * 0.003)) * downforceFactor;
+    this.steeringAngle = THREE.MathUtils.lerp(this.steeringAngle, inputs.steer * steerSensitivity, 0.25);
 
-    // Lateral grip and drift calculation
-    const turnRate = this.steeringAngle * (this.speedKmh / 3.6) * dt;
-    this.forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), turnRate);
+    // Lateral grip and drift calculation with smooth low-speed to high-speed kinematics
+    const speedMs = this.speedKmh / 3.6;
+    const effectiveTurnSpeed = Math.max(8, Math.min(65, speedMs));
+    const turnRate = (this.steeringAngle * (effectiveTurnSpeed / 3.2)) * dt;
+    this.forward.applyAxisAngle(new THREE.Vector3(0, 1, 0), turnRate).normalize();
 
     const corneringForce = Math.abs(inputs.steer) * Math.pow(this.speedKmh / 100, 2);
     const gripThreshold = isF1 ? 4.2 : 2.8;
@@ -248,7 +261,6 @@ export class RacingPhysicsEngine {
     }
 
     // Move car position
-    const speedMs = this.speedKmh / 3.6;
     const movement = this.forward.clone().multiplyScalar(speedMs * dt);
 
     // Handbrake slide
@@ -262,8 +274,46 @@ export class RacingPhysicsEngine {
     // Calculate nearest track progress (projecting position along spline)
     this.updateTrackProgress();
 
+    // --- RIGID TRACK BOUNDARIES & BARRIER COLLISION PROTECTION ---
+    const currTrackPt = this.curve.getPointAt(this.trackProgress);
+    const currTrackTan = this.curve.getTangentAt(this.trackProgress).normalize();
+    const currTrackNorm = new THREE.Vector3(-currTrackTan.z, 0, currTrackTan.x).normalize();
+
+    const carOffset = new THREE.Vector3().subVectors(this.position, currTrackPt);
+    const currentLatDist = carOffset.dot(currTrackNorm);
+    const absLatDist = Math.abs(currentLatDist);
+
+    // Barriers are at ±13m. Clamp strictly at 12.6m so the car can NEVER drive off the circuit
+    const MAX_BARRIER_DISTANCE = 12.6;
+
+    if (absLatDist > MAX_BARRIER_DISTANCE) {
+      const barrierSide = Math.sign(currentLatDist);
+      const clampedLat = barrierSide * (MAX_BARRIER_DISTANCE - 0.2);
+
+      // Clamp position safely inside track
+      this.position.x = currTrackPt.x + currTrackNorm.x * clampedLat;
+      this.position.z = currTrackPt.z + currTrackNorm.z * clampedLat;
+
+      // Deflect forward heading along track tangent (prevent pushing through barrier)
+      this.forward.lerp(currTrackTan, 0.5).normalize();
+
+      // Scrub impact speed
+      if (this.speedKmh > 30) {
+        audioEngine.playBarrierThump();
+      }
+      this.speedKmh = Math.max(0, this.speedKmh * 0.65);
+      this.lateralSlip = 0.85;
+    }
+
+    // Safety emergency recovery if car is somehow dislodged > 18 meters
+    if (absLatDist > 18.0) {
+      this.position.copy(currTrackPt).add(new THREE.Vector3(0, 0.35, 0));
+      this.forward.copy(currTrackTan);
+      this.speedKmh = 35;
+    }
+
     // Altitude tracking (match elevation of the track spline)
-    const currentElevation = this.curve.getPointAt(this.trackProgress).y;
+    const currentElevation = currTrackPt.y;
     this.position.y = THREE.MathUtils.lerp(this.position.y, currentElevation + 0.35, 0.25);
 
     // Gear & RPM simulation
@@ -285,9 +335,8 @@ export class RacingPhysicsEngine {
     let bestT = currentT;
     let minDistSq = Infinity;
 
-    // Search localized neighborhood (-0.03 to +0.03 of progress)
-    const STEPS = 30;
-    for (let i = -15; i <= 15; i++) {
+    // Search localized neighborhood (-0.02 to +0.04 of progress)
+    for (let i = -20; i <= 35; i++) {
       const testT = (currentT + (i / 1000) + 1) % 1;
       const pt = this.curve.getPointAt(testT);
       const distSq = pt.distanceToSquared(this.position);
@@ -297,7 +346,20 @@ export class RacingPhysicsEngine {
       }
     }
 
-    // Detect lap completion crossing start/finish line (t: 0.98 -> 0.02)
+    // Failsafe: If somehow desynced (>30m from track), global search to find true closest track point
+    if (minDistSq > 900) {
+      for (let s = 0; s < 100; s++) {
+        const testT = s / 100;
+        const pt = this.curve.getPointAt(testT);
+        const distSq = pt.distanceToSquared(this.position);
+        if (distSq < minDistSq) {
+          minDistSq = distSq;
+          bestT = testT;
+        }
+      }
+    }
+
+    // Detect lap completion crossing start/finish line (t: 0.88 -> 0.12)
     if (this.trackProgress > 0.88 && bestT < 0.12) {
       this.onLapCompleted();
     }
